@@ -23,6 +23,12 @@ const TOLERANCE = 0.10;       // ±10% sul target
 const MAX_ITERATIONS = 5;     // tetto iterazioni per anello / estensione
 const EARTH_R = 6371000;      // raggio terrestre medio in metri
 
+// Anello: parametri per evitare sovrapposizioni andata/ritorno.
+const OVERLAP_THRESHOLD = 0.10;       // 10% di celle visitate >1 volta = accettabile
+const OVERLAP_ROTATION_RAD = Math.PI / 3;  // 60° per ogni nuovo tentativo
+const OVERLAP_MAX_ATTEMPTS = 3;       // tentativi di rotazione per ridurre overlap
+const OVERLAP_CELL_M = 15;            // ~15 m per cella di discretizzazione
+
 function toRad(deg) {
   return (deg * Math.PI) / 180;
 }
@@ -88,6 +94,27 @@ function bearingRad(lat1, lon1, lat2, lon2) {
   return Math.atan2(y, x);
 }
 
+// Discretizza il percorso in celle ~15m e calcola la frazione di celle visitate
+// più di una volta. È un'euristica per misurare "quanto il giro si ripercorre
+// addosso": andata e ritorno sulla stessa strada → molte celle con count>1.
+// Strade adiacenti (es. due lati di una via) cadono in celle diverse, quindi
+// non vengono erroneamente contate come overlap.
+//
+// 1°/(60 nautical miles) ≈ 0.000135° ≈ 15m. Usiamo 7400 = 1/0.000135.
+function measureOverlapPct(geojson) {
+  const coords = (geojson && geojson.coordinates) || [];
+  if (coords.length < 2) return 0;
+  const cells = new Map();
+  const scale = 1000 * (60 / OVERLAP_CELL_M);  // ≈ 4000 per OVERLAP_CELL_M=15
+  for (const [lon, lat] of coords) {
+    const key = `${Math.round(lat * scale)},${Math.round(lon * scale)}`;
+    cells.set(key, (cells.get(key) || 0) + 1);
+  }
+  let overlapping = 0;
+  for (const c of cells.values()) if (c > 1) overlapping++;
+  return cells.size > 0 ? overlapping / cells.size : 0;
+}
+
 // Errore astratto per quando un'iterazione viene cancellata dall'utente.
 export class PlanAbortError extends Error {
   constructor() {
@@ -100,36 +127,54 @@ function checkAbort(signal) {
   if (signal && signal.aborted) throw new PlanAbortError();
 }
 
+// Calcola un tentativo di anello con QUADRILATERO: 3 waypoint a θ, θ+90°, θ+180°
+// distribuiti su un semicerchio (forma "a ferro di cavallo"). Più strade
+// differenti rispetto al triangolo precedente → minor probabilità di overlap.
+async function tryLoopQuadrilateral({ origin, profile, R, θ, signal }) {
+  const a = destinationPoint(origin.lat, origin.lon, R, θ);
+  const b = destinationPoint(origin.lat, origin.lon, R, θ + Math.PI / 2);
+  const c = destinationPoint(origin.lat, origin.lon, R, θ + Math.PI);
+  const waypoints = [
+    { lat: origin.lat, lon: origin.lon },
+    a, b, c,
+    { lat: origin.lat, lon: origin.lon },
+  ];
+  const resp = await brouter.fetchRoute(waypoints, profile);
+  checkAbort(signal);
+  return {
+    resp,
+    km: geojsonLengthKm(resp.geojson),
+    overlap: measureOverlapPct(resp.geojson),
+    waypoints,
+  };
+}
+
 /**
  * Costruisce un anello iterativo intorno al punto di partenza.
- * Strategy: triangolo P → A → B → P, con A e B a distanza R dalla partenza
- * con angoli θ e θ+120°. R viene aggiornato proporzionalmente al rapporto
- * target/distanzaOttenuta, fino a convergere o esaurire iterazioni.
+ *
+ * Strategia a due livelli:
+ *   - Ciclo esterno: aggiusta il RAGGIO finché la distanza ottenuta entra
+ *     nella tolleranza ±10% del target.
+ *   - Ciclo interno (per ogni R): prova fino a 3 rotazioni di 60° per ridurre
+ *     l'overlap (sovrapposizione andata/ritorno) sotto la soglia del 10%.
+ *
+ * Se la distanza converge ma l'overlap resta alto, ritorna comunque il
+ * miglior tentativo (overlap minimo) con un warning all'utente.
  */
 async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signal }) {
-  // Stima iniziale del raggio. Un triangolo equilatero di vertici alla
-  // stessa distanza R dal baricentro avrebbe perimetro ~3R*√3. Sulle
-  // strade reali, però, il percorso devia: usiamo target/4 come stima
-  // empirica conservativa.
-  let R = (targetKm * 1000) / 4;
-  let θ = Number.isFinite(loopSeed) ? loopSeed : 0;
+  // Stima iniziale del raggio: il perimetro reale di un quadrilatero "a ferro
+  // di cavallo" su strade reali è ≈ 5R (3 lati di R + lato di ritorno con
+  // strade non-lineari ≈ 2R).
+  let R = (targetKm * 1000) / 5;
+  let θBase = Number.isFinite(loopSeed) ? loopSeed : 0;
 
-  let best = null;     // miglior tentativo finora (per target più vicino)
+  // Miglior tentativo globale (per fallback finale).
+  let best = null;
   let bestDelta = Infinity;
   let lastErr = null;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     checkAbort(signal);
-
-    const a = destinationPoint(origin.lat, origin.lon, R, θ);
-    const b = destinationPoint(origin.lat, origin.lon, R, θ + (2 * Math.PI) / 3);
-
-    const waypoints = [
-      { lat: origin.lat, lon: origin.lon },
-      a,
-      b,
-      { lat: origin.lat, lon: origin.lon },
-    ];
 
     if (onProgress) {
       onProgress({
@@ -141,53 +186,83 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
       });
     }
 
-    try {
-      const resp = await brouter.fetchRoute(waypoints, profile);
-      checkAbort(signal);
-      const km = geojsonLengthKm(resp.geojson);
-      const delta = Math.abs(km - targetKm);
+    // Cerca il miglior tentativo a questo raggio variando θ se l'overlap è alto.
+    let attemptBest = null;
+    let attemptBestOverlap = Infinity;
+    let lastKm = null;
+    let attemptErr = null;
 
-      // Memorizza miglior tentativo (per fallback se nessuno è in tolleranza).
-      if (delta < bestDelta) {
-        best = { ...resp, km, waypoints };
-        bestDelta = delta;
+    for (let rot = 0; rot < OVERLAP_MAX_ATTEMPTS; rot++) {
+      const θ = θBase + rot * OVERLAP_ROTATION_RAD;
+      try {
+        const t = await tryLoopQuadrilateral({ origin, profile, R, θ, signal });
+        lastKm = t.km;
+
+        // Memorizza tentativo con overlap minore a questo R.
+        if (t.overlap < attemptBestOverlap) {
+          attemptBest = t;
+          attemptBestOverlap = t.overlap;
+        }
+
+        // Se overlap è già accettabile, non serve ruotare ulteriormente.
+        if (t.overlap <= OVERLAP_THRESHOLD) break;
+      } catch (err) {
+        if (err.name === 'PlanAbortError') throw err;
+        attemptErr = err;
+        // Continua con la rotazione successiva.
       }
-
-      // In tolleranza? finito.
-      if (km >= targetKm * (1 - TOLERANCE) && km <= targetKm * (1 + TOLERANCE)) {
-        return {
-          geojson: resp.geojson,
-          messages: resp.messages,
-          properties: resp.properties,
-          mode: 'loop',
-          iterations: i + 1,
-          finalKm: km,
-          warning: null,
-        };
-      }
-
-      // Aggiorna R proporzionalmente. Se km è 0 (improbabile) evita NaN.
-      if (km > 0) R = R * (targetKm / km);
-      // Lieve perturbazione di θ per evitare cicli su strade identiche.
-      θ += 0.1;
-    } catch (err) {
-      if (err.name === 'PlanAbortError') throw err;
-      lastErr = err;
-      // Se il triangolo non è raggiungibile, perturba angolo e riprova.
-      θ += Math.PI / 6;
     }
+
+    if (!attemptBest) {
+      // Tutte le rotazioni hanno fallito a questo R: perturba R e riprova.
+      lastErr = attemptErr;
+      R *= 0.9;
+      continue;
+    }
+
+    const km = attemptBest.km;
+    const delta = Math.abs(km - targetKm);
+
+    // Memorizza miglior tentativo globale (priorità: distanza, poi overlap).
+    if (delta < bestDelta) {
+      best = { ...attemptBest, delta };
+      bestDelta = delta;
+    }
+
+    // In tolleranza? ritorna subito (anche se overlap > soglia: useremo warning).
+    if (km >= targetKm * (1 - TOLERANCE) && km <= targetKm * (1 + TOLERANCE)) {
+      return {
+        geojson: attemptBest.resp.geojson,
+        messages: attemptBest.resp.messages,
+        properties: attemptBest.resp.properties,
+        mode: 'loop',
+        iterations: i + 1,
+        finalKm: km,
+        warning: attemptBestOverlap > OVERLAP_THRESHOLD
+          ? `Anello con ${Math.round(attemptBestOverlap * 100)}% di tratto comune (rete stradale limitata in zona).`
+          : null,
+      };
+    }
+
+    // Aggiorna R proporzionalmente al rapporto target/ottenuto.
+    if (km > 0) R = R * (targetKm / km);
+    // Lieve perturbazione di θ tra iterazioni di distanza per evitare loop.
+    θBase += 0.05;
   }
 
-  // Esaurite iterazioni. Restituisci miglior tentativo + warning.
+  // Esaurite iterazioni distanza: ritorna miglior tentativo globale.
   if (best) {
+    const overlapNote = best.overlap > OVERLAP_THRESHOLD
+      ? ` Tratto comune: ${Math.round(best.overlap * 100)}%.`
+      : '';
     return {
-      geojson: best.geojson,
-      messages: best.messages,
-      properties: best.properties,
+      geojson: best.resp.geojson,
+      messages: best.resp.messages,
+      properties: best.resp.properties,
       mode: 'loop',
       iterations: MAX_ITERATIONS,
       finalKm: best.km,
-      warning: `Distanza approssimativa: ${best.km.toFixed(1)} km (target ${targetKm} km).`,
+      warning: `Distanza approssimativa: ${best.km.toFixed(1)} km (target ${targetKm} km).${overlapNote}`,
     };
   }
 
