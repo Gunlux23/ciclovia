@@ -1,0 +1,23 @@
+# Windows metadata
+desktop.ini
+Thumbs.db
+*.lnk
+
+# Screenshot/asset di lavoro (non parte dell'app)
+fontana.png
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+
+# Build / playwright output
+.playwright-mcp/
+
+# Server log temporanei
+/tmp/
+*.log

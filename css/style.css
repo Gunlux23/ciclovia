@@ -1,0 +1,1187 @@
+/* =========================================================
+   Ciclovia — style.css
+   Mobile-first PWA per percorsi ciclabili.
+   Palette: verde scuro #2d5016, beige #f5f5f0, arancio #d97706
+   ========================================================= */
+
+/* ---------- Design tokens ---------- */
+:root {
+  --c-green: #2d5016;
+  --c-green-700: #243f10;
+  --c-green-300: #4a7a26;
+  --c-beige: #f5f5f0;
+  --c-beige-dark: #e8e8df;
+  --c-accent: #d97706;
+  --c-accent-700: #b3620a;
+  --c-text: #1b1b18;
+  --c-text-muted: #5b5b54;
+  --c-danger: #b91c1c;
+  --c-cycle: #2563eb;
+  --c-off: #b45309;
+  --c-road: #6b7280;
+  --c-white: #ffffff;
+  --c-overlay: rgba(0, 0, 0, .45);
+  --shadow-1: 0 2px 8px rgba(0, 0, 0, .12);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, .18);
+  --radius: 14px;
+  --radius-sm: 8px;
+  --tap: 44px;
+  --topbar-h: 60px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --sheet-peek: 112px;
+  --font:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+}
+
+/* ---------- Reset & base ---------- */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--c-beige);
+  color: var(--c-text);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+body {
+  /* Prevent iOS bounce / pull-to-refresh */
+  position: fixed;
+  inset: 0;
+}
+
+h1, h2, h3, p, ul, ol, dl, dd { margin: 0; padding: 0; }
+ul, ol { list-style: none; }
+button { font: inherit; color: inherit; }
+input, select, button { font-family: inherit; }
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0);
+  white-space: nowrap; border: 0;
+}
+
+/* Focus visibile coerente */
+:focus { outline: none; }
+:focus-visible {
+  outline: 3px solid var(--c-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---------- Bottoni base ---------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--tap);
+  min-width: var(--tap);
+  padding: 0 14px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  background: var(--c-white);
+  color: var(--c-text);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s ease, transform .05s ease, box-shadow .15s ease;
+  box-shadow: var(--shadow-1);
+  user-select: none;
+}
+.btn:active { transform: translateY(1px); }
+.btn[disabled] { opacity: .5; cursor: not-allowed; }
+.btn[hidden] { display: none; }
+
+.btn--primary {
+  background: var(--c-green);
+  color: var(--c-white);
+}
+.btn--primary:hover { background: var(--c-green-700); }
+
+.btn--accent {
+  background: var(--c-accent);
+  color: var(--c-white);
+}
+.btn--accent:hover { background: var(--c-accent-700); }
+
+.btn--ghost {
+  background: transparent;
+  color: var(--c-green);
+  border-color: var(--c-green-300);
+  box-shadow: none;
+}
+.btn--ghost:hover { background: rgba(45,80,22,.08); }
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap);
+  height: var(--tap);
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: currentColor;
+  cursor: pointer;
+}
+.icon-btn:hover { background: rgba(0,0,0,.06); }
+
+/* ---------- Top bar ---------- */
+.topbar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 1000;
+  background: var(--c-green);
+  color: var(--c-white);
+  padding-top: var(--safe-top);
+  box-shadow: var(--shadow-1);
+}
+.topbar__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: var(--topbar-h);
+  padding: 0 max(12px, var(--safe-right)) 0 max(12px, var(--safe-left));
+}
+.topbar__logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: .2px;
+}
+.topbar__logo-mark { font-size: 1.4rem; }
+.topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+
+.profile-select select {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 38px;
+  padding: 0 30px 0 12px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(255,255,255,.4);
+  background: rgba(255,255,255,.12);
+  color: var(--c-white);
+  font-weight: 600;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 16px) 50%,
+    calc(100% - 11px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+.profile-select select option { color: var(--c-text); }
+
+.menu-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+  background: var(--c-white);
+  color: var(--c-text);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  padding: 6px;
+  z-index: 1100;
+}
+.menu-popover[hidden] { display: none; }
+.menu-popover button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  min-height: var(--tap);
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 500;
+}
+.menu-popover button:hover { background: var(--c-beige); }
+
+/* ---------- Mappa ---------- */
+.map-wrap {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 0;
+}
+#map {
+  position: absolute;
+  inset: 0;
+  background: var(--c-beige-dark);
+}
+
+/* Leaflet sopravvive senza zoom controls? Lasciamo i suoi, ma li riposizioniamo
+   per non scontrarsi con la top bar */
+.leaflet-top.leaflet-left {
+  top: calc(var(--topbar-h) + var(--safe-top) + 8px) !important;
+  left: max(8px, var(--safe-left)) !important;
+}
+.leaflet-top.leaflet-right,
+.leaflet-bottom.leaflet-right {
+  right: max(8px, var(--safe-right)) !important;
+}
+.leaflet-bottom { bottom: calc(var(--sheet-peek) + 8px) !important; }
+.leaflet-control-attribution {
+  font-size: 10px !important;
+  background: rgba(255,255,255,.8) !important;
+}
+
+/* Marker dragging visual */
+.leaflet-marker-draggable { cursor: grab; }
+.leaflet-marker-dragging { cursor: grabbing !important; }
+.marker--suspect { filter: drop-shadow(0 0 6px var(--c-danger)); }
+
+/* ---------- Floating search ---------- */
+.search {
+  position: fixed;
+  top: calc(var(--topbar-h) + var(--safe-top) + 10px);
+  right: max(10px, var(--safe-right));
+  z-index: 900;
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+}
+/* Quando aperto, il search panel deve stare sopra i bottom sheet */
+.search[data-open="true"] { z-index: 1100; }
+.search__toggle {
+  background: var(--c-white);
+  color: var(--c-green);
+  box-shadow: var(--shadow-1);
+}
+.search[data-open="true"] .search__toggle { display: none; }
+
+.search__panel {
+  display: flex;
+  align-items: center;
+  background: var(--c-white);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  padding: 6px 6px 6px 12px;
+  width: min(86vw, 360px);
+  position: relative;
+}
+.search__panel[hidden] { display: none; }
+.search[data-open="true"] .search__panel { display: flex; }
+
+.search__input {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  border: 0;
+  outline: none;
+  font-size: 1rem;
+  background: transparent;
+  color: var(--c-text);
+}
+.search__close { color: var(--c-text-muted); }
+
+.search__results {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0; right: 0;
+  background: var(--c-white);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 4px;
+}
+.search__results:empty { display: none; }
+.search__results li {
+  padding: 12px;
+  min-height: var(--tap);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: .95rem;
+}
+.search__results li:hover,
+.search__results li[aria-selected="true"] { background: var(--c-beige); }
+
+/* ---------- Floating action buttons ---------- */
+.fab {
+  position: fixed;
+  z-index: 850;
+  width: 48px; height: 48px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--c-white);
+  color: var(--c-green);
+  box-shadow: var(--shadow-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.fab:hover { background: var(--c-beige); }
+.fab--gps {
+  right: max(12px, var(--safe-right));
+  bottom: calc(var(--sheet-peek) + 12px + var(--safe-bottom));
+  transition: bottom .2s ease;
+}
+body[data-result-open="true"] .fab--gps {
+  /* sale quando il sheet risultato è aperto */
+  bottom: calc(var(--sheet-peek) + 60vh - 40vh + var(--safe-bottom));
+}
+
+/* ---------- Bottom sheets ---------- */
+.sheet {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: 0;
+  background: var(--c-white);
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+  box-shadow: 0 -6px 20px rgba(0,0,0,.15);
+  z-index: 950;
+  transform: translateY(0);
+  transition: transform .25s ease, height .25s ease;
+  padding-bottom: var(--safe-bottom);
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+}
+.sheet[hidden] { display: none; }
+
+.sheet__handle {
+  align-self: stretch;
+  width: 100%;
+  min-height: 44px;
+  background: transparent;
+  border: 0;
+  padding: 10px 0 6px;
+  cursor: pointer;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  /* drag verticale CSS-only: l'utente trascina il sheet via JS in ui.js,
+     ma il pulsante è grande e a fuoco accessibile */
+}
+.sheet__grabber {
+  display: block;
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--c-beige-dark);
+}
+/* Chevron che indica direzione di apertura/chiusura */
+.sheet__handle::after {
+  content: "";
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid var(--c-text-muted);
+  border-bottom: 2px solid var(--c-text-muted);
+  transform: rotate(-135deg);
+  transition: transform .25s ease;
+  margin-top: -2px;
+}
+.sheet[data-state="open"] .sheet__handle::after,
+.sheet[data-state="full"] .sheet__handle::after {
+  transform: rotate(45deg);
+  margin-top: -6px;
+}
+
+.sheet__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px max(16px, var(--safe-right)) 10px max(16px, var(--safe-left));
+  gap: 10px;
+}
+.sheet__title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--c-green);
+}
+.sheet__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sheet__body {
+  padding: 0 max(16px, var(--safe-right)) 16px max(16px, var(--safe-left));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* Stati sheet — JS imposta data-state */
+.sheet--stops[data-state="peek"]     { height: var(--sheet-peek); }
+.sheet--stops[data-state="open"]     { height: 50vh; }
+.sheet--stops[data-state="full"]     { height: 85vh; }
+/* In peek nascondiamo la lista per non rubare spazio alla mappa */
+.sheet--stops[data-state="peek"] .sheet__body { display: none; }
+
+.sheet--result {
+  z-index: 960; /* sopra al sheet tappe quando attivo */
+}
+.sheet--result[data-state="hidden"]  { transform: translateY(100%); }
+.sheet--result[data-state="peek"]    { height: 200px; }
+.sheet--result[data-state="open"]    { height: 60vh; }
+.sheet--result[data-state="full"]    { height: 85vh; }
+
+/* ---------- Stops list ---------- */
+.stops {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.stops__empty {
+  color: var(--c-text-muted);
+  text-align: center;
+  padding: 16px 8px;
+  font-size: .95rem;
+}
+.stops__empty[hidden] { display: none; }
+
+.stop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  min-height: var(--tap);
+  background: var(--c-beige);
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+}
+.stop[data-dragging="true"] {
+  opacity: .7;
+  border-color: var(--c-accent);
+  background: #fff7ec;
+}
+.stop__handle {
+  width: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  cursor: grab;
+  color: var(--c-text-muted);
+  flex: 0 0 auto;
+}
+.stop__handle span {
+  display: block;
+  width: 18px;
+  height: 2px;
+  background: currentColor;
+  border-radius: 2px;
+}
+.stop__index {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: var(--c-green);
+  color: var(--c-white);
+  font-size: .85rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.stop__label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: .95rem;
+}
+.stop__remove {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  color: var(--c-danger);
+  cursor: pointer;
+  font-size: 1.2rem;
+}
+.stop__remove:hover { background: rgba(185,28,28,.1); }
+
+/* ---------- Stats / surfaces / chart ---------- */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.stats__item {
+  background: var(--c-beige);
+  border-radius: var(--radius);
+  padding: 10px 8px;
+  text-align: center;
+}
+.stats__item dt {
+  font-size: .72rem;
+  color: var(--c-text-muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.stats__item dd {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--c-green);
+  margin-top: 2px;
+}
+.stats__unit {
+  font-size: .75rem;
+  color: var(--c-text-muted);
+  font-weight: 500;
+  margin-left: 2px;
+}
+@media (max-width: 380px) {
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .stats__item dd { font-size: 1.1rem; }
+}
+
+.surfaces { margin-bottom: 14px; }
+.surfaces__bar {
+  display: flex;
+  width: 100%;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--c-beige-dark);
+}
+.surfaces__seg { display: block; height: 100%; transition: width .3s ease; }
+.surfaces__seg--cycle { background: var(--c-cycle); }
+.surfaces__seg--off   { background: var(--c-off); }
+.surfaces__seg--road  { background: var(--c-road); }
+
+.surfaces__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: .85rem;
+  color: var(--c-text-muted);
+}
+.surfaces__legend b { color: var(--c-text); font-weight: 700; margin-left: 4px; }
+.dot {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.dot--cycle { background: var(--c-cycle); }
+.dot--off   { background: var(--c-off); }
+.dot--road  { background: var(--c-road); }
+
+/* Legenda colori percorso (Feature 3) */
+.route-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: .8rem;
+  color: var(--c-text-muted);
+  list-style: none;
+  padding: 0;
+}
+.route-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.route-chip {
+  display: inline-block;
+  width: 18px;
+  height: 4px;
+  border-radius: 2px;
+  vertical-align: middle;
+}
+.route-chip--cycleway { background: #2563eb; }
+.route-chip--asphalt  { background: #6b7280; }
+.route-chip--gravel   { background: #f5f5f0; box-shadow: 0 0 0 1px #999 inset; }
+.route-chip--path     { background: #b45309; }
+.route-chip--busy     { background: #dc2626; }
+
+.chart-wrap {
+  background: var(--c-beige);
+  border-radius: var(--radius);
+  padding: 8px;
+  margin-bottom: 14px;
+}
+
+/* ---------- Result actions ---------- */
+.result-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.result-actions .btn { flex: 1 1 140px; }
+
+/* ---------- Toast ---------- */
+.toast {
+  position: fixed;
+  top: calc(var(--topbar-h) + var(--safe-top) + 16px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  z-index: 2000;
+  background: var(--c-green);
+  color: var(--c-white);
+  padding: 12px 18px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  font-size: .95rem;
+  max-width: min(90vw, 420px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease;
+}
+.toast[hidden] { display: none; }
+.toast[data-visible="true"] {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+}
+.toast[data-tone="error"]   { background: var(--c-danger); }
+.toast[data-tone="success"] { background: var(--c-green-300); }
+.toast[data-tone="info"]    { background: var(--c-green); }
+
+/* ---------- Leaflet divIcon markers (Ciclovia) ---------- */
+.ciclovia-marker-wrapper { background: transparent; border: 0; }
+.ciclovia-marker {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--marker-color, var(--c-text-muted));
+  border: 3px solid var(--c-white);
+  box-shadow: 0 2px 6px rgba(0,0,0,.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--c-white);
+  font-size: .78rem;
+  font-weight: 700;
+  line-height: 1;
+  position: relative;
+}
+.ciclovia-marker--start { --marker-color: #2d5016; }
+.ciclovia-marker--end   { --marker-color: #d97706; }
+.ciclovia-marker--via,
+.ciclovia-marker--mid   { --marker-color: #6b7280; }
+.ciclovia-marker__label {
+  display: inline-block;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* ---------- Tappe list items (creati da ui.js) ---------- */
+.tappa-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 0;
+  min-height: var(--tap);
+  background: var(--c-beige);
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color .15s ease, background .15s ease;
+}
+.tappa-item[data-active="true"] {
+  border-color: var(--c-green-300);
+  background: #fff;
+}
+.tappa-item__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  min-height: var(--tap);
+}
+.tappa-item__actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 12px;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height .2s ease, opacity .2s ease, padding .2s ease;
+}
+.tappa-item[data-active="true"] .tappa-item__actions {
+  max-height: 64px;
+  opacity: 1;
+  padding: 0 12px 10px 12px;
+}
+.tappa-item__action {
+  flex: 1;
+  min-height: var(--tap);
+  border: 0;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: .95rem;
+  cursor: pointer;
+}
+.tappa-item__action--change {
+  background: var(--c-beige-dark);
+  color: var(--c-text);
+}
+.tappa-item__action--change:hover { background: #d8d8cd; }
+.tappa-item__action--delete {
+  background: var(--c-danger);
+  color: var(--c-white);
+}
+.tappa-item__action--delete:hover { background: #991717; }
+.tappa-item--dragging {
+  opacity: .7;
+  border-color: var(--c-accent);
+  background: #fff7ec;
+}
+.tappa-item__handle {
+  width: 28px;
+  cursor: grab;
+  color: var(--c-text-muted);
+  flex: 0 0 auto;
+  text-align: center;
+  font-size: .9rem;
+  letter-spacing: -2px;
+}
+.tappa-item__badge {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: var(--c-green);
+  color: var(--c-white);
+  font-size: .85rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.tappa-item__label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: .95rem;
+  cursor: pointer;
+}
+.tappa-item__remove {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  color: var(--c-danger);
+  cursor: pointer;
+  font-size: 1.2rem;
+}
+.tappa-item__remove:hover { background: rgba(185,28,28,.1); }
+
+/* Badge differenziati per partenza / destinazione */
+.tappa-item--start .tappa-item__badge { background: var(--c-green); }
+.tappa-item--end   .tappa-item__badge { background: var(--c-accent); }
+.tappa-item__role {
+  font-size: .72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--c-text-muted);
+  display: block;
+  line-height: 1.1;
+}
+.tappa-item__name {
+  display: block;
+  font-size: .95rem;
+  color: var(--c-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tappa-item__label { display: block; }
+
+/* Placeholder cards (stato vuoto) */
+.tappa-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 12px;
+  min-height: var(--tap);
+  background: transparent;
+  border: 1.5px dashed var(--c-beige-dark);
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: var(--c-text-muted);
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  transition: background .15s ease, border-color .15s ease;
+}
+.tappa-placeholder:hover {
+  background: var(--c-beige);
+  border-color: var(--c-green-300);
+}
+.tappa-placeholder--start { border-color: rgba(45,80,22,.35); }
+.tappa-placeholder--end   { border-color: rgba(217,119,6,.45); }
+.tappa-placeholder__icon {
+  font-size: 1.3rem;
+  flex: 0 0 auto;
+}
+.tappa-placeholder__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.tappa-placeholder__role {
+  font-size: .72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--c-text);
+}
+.tappa-placeholder__hint {
+  font-size: .85rem;
+  color: var(--c-text-muted);
+}
+
+/* ---------- Result sheet alias for ui.js classList API ---------- */
+.result-sheet--hidden { transform: translateY(100%); }
+
+/* ---------- Search results open state ---------- */
+.search-results--open { display: block; }
+.search-result {
+  padding: 12px;
+  min-height: var(--tap);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: .95rem;
+  list-style: none;
+}
+.search-result:hover { background: var(--c-beige); }
+
+/* ---------- Toast container & dynamic toasts (created by ui.js) ---------- */
+.toast-container {
+  position: fixed;
+  top: calc(var(--topbar-h) + var(--safe-top) + 16px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: min(90vw, 420px);
+}
+.toast-container .toast {
+  position: static;
+  transform: none;
+  opacity: 1;
+  pointer-events: auto;
+  animation: toast-in .2s ease-out;
+}
+.toast--info    { background: var(--c-green); color: var(--c-white); }
+.toast--success { background: var(--c-green-300); color: var(--c-white); }
+.toast--error   { background: var(--c-danger); color: var(--c-white); }
+.toast--leaving { opacity: 0; transform: translateY(-8px); transition: opacity .2s ease, transform .2s ease; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- Reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* ---------- Tablet / desktop tweaks ---------- */
+@media (min-width: 768px) {
+  :root { --sheet-peek: 100px; }
+  .sheet {
+    left: auto;
+    right: 20px;
+    bottom: 20px;
+    width: 380px;
+    border-radius: var(--radius);
+    max-height: calc(100vh - var(--topbar-h) - 40px);
+  }
+  .sheet--stops[data-state="peek"]   { height: 100px; }
+  .sheet--stops[data-state="open"]   { height: 420px; }
+  .sheet--stops[data-state="full"]   { height: calc(100vh - var(--topbar-h) - 40px); }
+  .sheet--result {
+    left: 20px;
+    right: auto;
+    bottom: 20px;
+    width: 420px;
+  }
+  .sheet--result[data-state="peek"]  { height: 220px; }
+  .sheet--result[data-state="open"]  { height: 480px; }
+  .sheet--result[data-state="full"]  { height: calc(100vh - var(--topbar-h) - 40px); }
+  .fab--gps {
+    bottom: calc(20px + 96px + 12px);
+    right: 20px;
+  }
+  .leaflet-bottom { bottom: 20px !important; }
+}
+
+/* Profile hint sotto il selettore */
+.profile-select {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1.1;
+}
+.profile-hint {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.82);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+  pointer-events: none;
+}
+@media (max-width: 380px) {
+  .profile-hint { display: none; }
+}
+
+/* ---------- Marker popup "Elimina tappa" ---------- */
+.ciclovia-marker-popup .leaflet-popup-content-wrapper {
+  border-radius: var(--radius);
+  padding: 4px;
+  box-shadow: var(--shadow-2);
+}
+.ciclovia-marker-popup .leaflet-popup-content {
+  margin: 4px;
+}
+.marker-popup__delete {
+  min-height: var(--tap);
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--c-danger);
+  color: var(--c-white);
+  font-weight: 600;
+  font-size: .95rem;
+  cursor: pointer;
+}
+.marker-popup__delete:hover { background: #991717; }
+
+/* Marker fontanelle: cerchio azzurro con goccia bianca */
+.fountain-marker {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #2563eb;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform .12s ease;
+}
+.fountain-marker:hover { transform: scale(1.15); }
+.fountain-marker--other {
+  background: #93c5fd;
+  border-style: dashed;
+}
+
+/* =========================================================
+   Pannello "Distanza target"
+   ========================================================= */
+.target-distance {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: var(--c-white);
+  border: 1px solid var(--c-beige-dark);
+  border-radius: var(--radius);
+}
+
+.target-distance__toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.target-distance__toggle input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.target-distance__toggle-slider {
+  flex: 0 0 auto;
+  position: relative;
+  width: 38px;
+  height: 22px;
+  background: #cbd5e1;
+  border-radius: 11px;
+  transition: background .15s ease;
+  margin-top: 2px;
+}
+.target-distance__toggle-slider::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: var(--c-white);
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0,0,0,.2);
+  transition: transform .15s ease;
+}
+.target-distance__toggle input[type="checkbox"]:checked
+  ~ .target-distance__toggle-slider {
+  background: var(--c-green);
+}
+.target-distance__toggle input[type="checkbox"]:checked
+  ~ .target-distance__toggle-slider::after {
+  transform: translateX(16px);
+}
+.target-distance__toggle input[type="checkbox"]:focus-visible
+  ~ .target-distance__toggle-slider {
+  outline: 3px solid var(--c-accent);
+  outline-offset: 2px;
+}
+.target-distance__toggle-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.target-distance__toggle-title {
+  font-weight: 600;
+  font-size: .95rem;
+  color: var(--c-text);
+}
+.target-distance__toggle-hint {
+  font-size: .8rem;
+  color: var(--c-text-muted);
+  line-height: 1.35;
+}
+
+.target-distance__controls {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* `display: flex` sovrascriverebbe lo `display: none` implicito di [hidden]:
+   ripristiniamo esplicitamente l'effetto dell'attributo hidden. */
+.target-distance__controls[hidden] {
+  display: none;
+}
+.target-distance__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.target-distance__slider {
+  flex: 1 1 auto;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: var(--c-beige-dark);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+}
+.target-distance__slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  background: var(--c-green);
+  border-radius: 50%;
+  border: 2px solid var(--c-white);
+  box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  cursor: pointer;
+}
+.target-distance__slider::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  background: var(--c-green);
+  border-radius: 50%;
+  border: 2px solid var(--c-white);
+  box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  cursor: pointer;
+}
+.target-distance__slider:focus-visible {
+  outline: 3px solid var(--c-accent);
+  outline-offset: 4px;
+}
+.target-distance__value {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  background: var(--c-beige);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+}
+.target-distance__input {
+  width: 64px;
+  padding: 2px 4px;
+  border: 1px solid var(--c-beige-dark);
+  border-radius: 4px;
+  background: var(--c-white);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--c-text);
+  text-align: right;
+  -moz-appearance: textfield;
+}
+.target-distance__input::-webkit-outer-spin-button,
+.target-distance__input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.target-distance__unit {
+  font-size: .9rem;
+  font-weight: 600;
+  color: var(--c-text-muted);
+}
+.target-distance__warning {
+  margin: 0;
+  padding: 8px 10px;
+  background: #fef3c7;
+  color: #854d0e;
+  border-left: 3px solid #f59e0b;
+  border-radius: 4px;
+  font-size: .85rem;
+}
+
+/* Bottone secondario (usato per "Altro giro") */
+.btn--secondary {
+  background: var(--c-cycle);
+  color: var(--c-white);
+}
+.btn--secondary:hover { background: #1d4ed8; }

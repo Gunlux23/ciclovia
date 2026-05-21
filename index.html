@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5"
+  />
+  <meta name="theme-color" content="#2d5016" />
+  <meta name="color-scheme" content="light" />
+  <meta name="description" content="Ciclovia — calcola percorsi in bici evitando il traffico." />
+  <meta name="application-name" content="Ciclovia" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Ciclovia" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="format-detection" content="telephone=no" />
+
+  <title>Ciclovia — percorsi in bici senza traffico</title>
+
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png" />
+
+  <link rel="stylesheet" href="js/vendor/leaflet.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- =========================================================
+       Top bar (sticky)
+       ========================================================= -->
+  <header class="topbar" role="banner">
+    <div class="topbar__inner">
+      <h1 class="topbar__logo" aria-label="Ciclovia, applicazione percorsi ciclabili">
+        <span class="topbar__logo-mark" aria-hidden="true">🚲</span>
+        <span class="topbar__logo-text">Ciclovia</span>
+      </h1>
+
+      <div class="topbar__actions">
+        <label class="profile-select" for="profile-select">
+          <span class="visually-hidden">Profilo bicicletta</span>
+          <select id="profile-select" name="profile" aria-label="Profilo bicicletta">
+            <option value="safety" title="Strade poco trafficate, qualsiasi tipo">Evita traffico</option>
+            <option value="trekking" title="Ciclabili e asfalto a basso traffico">Trekking</option>
+            <option value="gravel" title="Ciclabili, sterrati e strade bianche">Gravel</option>
+            <option value="fastbike" title="Solo asfalto, evita traffico">Strada</option>
+            <option value="mtb" title="Sentieri, single-track, sterrati ripidi">MTB</option>
+          </select>
+          <span id="profile-hint" class="profile-hint" aria-live="polite"></span>
+        </label>
+
+        <button
+          type="button"
+          id="menu-btn"
+          class="icon-btn"
+          aria-label="Apri menu"
+          aria-haspopup="menu"
+          aria-expanded="false"
+          aria-controls="menu-popover"
+        >
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+            <circle cx="5" cy="12" r="2" fill="currentColor" />
+            <circle cx="12" cy="12" r="2" fill="currentColor" />
+            <circle cx="19" cy="12" r="2" fill="currentColor" />
+          </svg>
+        </button>
+
+        <div
+          id="menu-popover"
+          class="menu-popover"
+          role="menu"
+          aria-label="Menu Ciclovia"
+          hidden
+        >
+          <button type="button" role="menuitem" id="menu-about">Informazioni</button>
+          <button type="button" role="menuitem" id="menu-reset">Azzera percorso</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- =========================================================
+       Mappa full-screen
+       ========================================================= -->
+  <main class="map-wrap" role="main">
+    <div id="map" aria-label="Mappa interattiva del percorso" role="application"></div>
+
+    <!-- Floating search (top-right, collapsabile) -->
+    <div class="search" id="search" data-open="false">
+      <button
+        type="button"
+        id="search-toggle"
+        class="search__toggle icon-btn"
+        aria-label="Apri ricerca indirizzo"
+        aria-expanded="false"
+        aria-controls="search-panel"
+      >
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+          <circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" stroke-width="2" />
+          <line
+            x1="14.5" y1="14.5" x2="20" y2="20"
+            stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          />
+        </svg>
+      </button>
+
+      <div class="search__panel" id="search-panel" hidden>
+        <label for="search-input" class="visually-hidden">Cerca indirizzo o luogo</label>
+        <input
+          type="search"
+          id="search-input"
+          class="search__input"
+          placeholder="Cerca città, via, luogo…"
+          autocomplete="off"
+          inputmode="search"
+          enterkeyhint="search"
+        />
+        <button
+          type="button"
+          id="search-close"
+          class="icon-btn search__close"
+          aria-label="Chiudi ricerca"
+        >
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+            <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <ul
+          id="search-results"
+          class="search__results"
+          role="listbox"
+          aria-label="Risultati ricerca"
+        ></ul>
+      </div>
+    </div>
+
+    <!-- Pulsante GPS (floating, bottom-right sopra al sheet) -->
+    <button
+      type="button"
+      id="btn-use-gps"
+      class="fab fab--gps"
+      aria-label="Centra sulla mia posizione"
+      title="La mia posizione"
+    >
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+        <circle cx="12" cy="12" r="3" fill="currentColor" />
+        <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2" />
+        <line x1="12" y1="1" x2="12" y2="4" stroke="currentColor" stroke-width="2" />
+        <line x1="12" y1="20" x2="12" y2="23" stroke="currentColor" stroke-width="2" />
+        <line x1="1" y1="12" x2="4" y2="12" stroke="currentColor" stroke-width="2" />
+        <line x1="20" y1="12" x2="23" y2="12" stroke="currentColor" stroke-width="2" />
+      </svg>
+    </button>
+  </main>
+
+  <!-- =========================================================
+       Bottom sheet: Tappe (sempre visibile)
+       ========================================================= -->
+  <section
+    class="sheet sheet--stops"
+    id="sheet-stops"
+    data-state="peek"
+    aria-label="Tappe del percorso"
+  >
+    <button
+      type="button"
+      class="sheet__handle"
+      id="sheet-stops-handle"
+      aria-label="Espandi o riduci pannello tappe"
+      aria-expanded="false"
+      aria-controls="sheet-stops-body"
+    >
+      <span class="sheet__grabber" aria-hidden="true"></span>
+    </button>
+
+    <header class="sheet__header">
+      <h2 class="sheet__title">Tappe</h2>
+      <div class="sheet__header-actions">
+        <button
+          type="button"
+          id="add-current"
+          class="btn btn--ghost"
+          aria-label="Aggiungi posizione attuale come tappa"
+        >
+          <span aria-hidden="true">📍</span>
+          <span>Posizione</span>
+        </button>
+        <button
+          type="button"
+          id="btn-add-waypoint"
+          class="btn btn--primary"
+          aria-label="Aggiungi una nuova tappa"
+        >
+          <span aria-hidden="true">+</span>
+          <span>Tappa</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="sheet__body" id="sheet-stops-body">
+      <ol
+        id="tappe-list"
+        class="stops"
+        aria-label="Elenco tappe riordinabile"
+      >
+        <!-- popolato da ui.js -->
+      </ol>
+      <p class="stops__empty" id="stops-empty" hidden>
+        Tocca una card qui sopra per scegliere partenza e destinazione, oppure tieni premuto sulla mappa.
+      </p>
+
+      <!-- =========================================================
+           Pannello "Distanza target" (feature opzionale)
+           ========================================================= -->
+      <div class="target-distance" id="target-distance">
+        <label class="target-distance__toggle" for="td-enable">
+          <input type="checkbox" id="td-enable" />
+          <span class="target-distance__toggle-slider" aria-hidden="true"></span>
+          <span class="target-distance__toggle-text">
+            <span class="target-distance__toggle-title">Imposta distanza</span>
+            <span class="target-distance__toggle-hint" id="td-hint">
+              Con solo partenza → anello che torna al punto di partenza.
+              Con partenza + arrivo → percorso allungato fino al target.
+            </span>
+          </span>
+        </label>
+
+        <div class="target-distance__controls" id="td-controls" hidden>
+          <div class="target-distance__row">
+            <input
+              type="range"
+              id="td-slider"
+              class="target-distance__slider"
+              min="5"
+              max="200"
+              step="1"
+              value="30"
+              aria-label="Distanza target in chilometri (slider)"
+            />
+            <div class="target-distance__value">
+              <input
+                type="number"
+                id="td-input"
+                class="target-distance__input"
+                min="1"
+                step="1"
+                value="30"
+                aria-label="Distanza target in chilometri (input numerico)"
+              />
+              <span class="target-distance__unit">km</span>
+            </div>
+          </div>
+          <p
+            class="target-distance__warning"
+            id="td-warning"
+            hidden
+          >⚠ Calcolo lento (può richiedere 10-30 secondi)</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       Bottom sheet: Risultato (nascosto fino al calcolo)
+       ========================================================= -->
+  <section
+    class="sheet sheet--result"
+    id="result-sheet"
+    data-state="hidden"
+    aria-label="Risultato del percorso"
+    hidden
+  >
+    <button
+      type="button"
+      class="sheet__handle"
+      id="sheet-result-handle"
+      aria-label="Espandi o riduci pannello risultato"
+      aria-expanded="false"
+      aria-controls="sheet-result-body"
+    >
+      <span class="sheet__grabber" aria-hidden="true"></span>
+    </button>
+
+    <header class="sheet__header">
+      <h2 class="sheet__title">Percorso</h2>
+      <button
+        type="button"
+        id="sheet-result-close"
+        class="icon-btn"
+        aria-label="Chiudi pannello risultato"
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+          <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </header>
+
+    <div class="sheet__body" id="sheet-result-body">
+      <dl class="stats" id="stats" aria-live="polite">
+        <div class="stats__item">
+          <dt>Distanza</dt>
+          <dd><span id="stats-km">—</span><span class="stats__unit">km</span></dd>
+        </div>
+        <div class="stats__item">
+          <dt>Dislivello +</dt>
+          <dd><span id="stats-dpos">—</span><span class="stats__unit">m</span></dd>
+        </div>
+        <div class="stats__item">
+          <dt>Dislivello −</dt>
+          <dd><span id="stats-dneg">—</span><span class="stats__unit">m</span></dd>
+        </div>
+        <div class="stats__item">
+          <dt>Tempo</dt>
+          <dd><span id="stats-time">—</span></dd>
+        </div>
+        <div class="stats__item">
+          <dt>Pendenza media</dt>
+          <dd><span id="stats-grade-avg">—</span><span class="stats__unit">%</span></dd>
+        </div>
+        <div class="stats__item">
+          <dt>Pendenza max</dt>
+          <dd><span id="stats-grade-max">—</span><span class="stats__unit">%</span></dd>
+        </div>
+        <div class="stats__item">
+          <dt>Quota min</dt>
+          <dd><span id="stats-elev-min">—</span><span class="stats__unit">m</span></dd>
+        </div>
+        <div class="stats__item">
+          <dt>Quota max</dt>
+          <dd><span id="stats-elev-max">—</span><span class="stats__unit">m</span></dd>
+        </div>
+        <div class="stats__item">
+          <dt>Fontanelle</dt>
+          <dd><span id="stats-fountains">0</span><span class="stats__unit">💧</span></dd>
+        </div>
+      </dl>
+
+      <div class="surfaces" aria-label="Tipologia di fondo">
+        <div class="surfaces__bar" role="img" aria-label="Distribuzione superfici">
+          <span class="surfaces__seg surfaces__seg--cycle" id="surf-cycle" style="width:0%"></span>
+          <span class="surfaces__seg surfaces__seg--off"   id="surf-off"   style="width:0%"></span>
+          <span class="surfaces__seg surfaces__seg--road"  id="surf-road"  style="width:0%"></span>
+        </div>
+        <ul class="surfaces__legend">
+          <li><span class="dot dot--cycle"></span> Ciclabile <b id="stats-ciclabile">0%</b></li>
+          <li><span class="dot dot--off"></span> Sterrato <b id="stats-sterrato">0%</b></li>
+          <li><span class="dot dot--road"></span> Asfalto <b id="pct-road">0%</b></li>
+        </ul>
+        <ul class="route-legend" aria-label="Legenda colori percorso">
+          <li><span class="route-chip route-chip--cycleway"></span> Ciclabile</li>
+          <li><span class="route-chip route-chip--asphalt"></span> Asfalto</li>
+          <li><span class="route-chip route-chip--gravel"></span> Sterrato</li>
+          <li><span class="route-chip route-chip--path"></span> Sentiero</li>
+          <li><span class="route-chip route-chip--busy"></span> Trafficata</li>
+        </ul>
+      </div>
+
+      <div class="chart-wrap" aria-label="Grafico altimetrico">
+        <canvas id="elevation-chart" height="140"></canvas>
+      </div>
+
+      <div class="result-actions">
+        <button
+          type="button"
+          id="btn-another-loop"
+          class="btn btn--secondary"
+          aria-label="Genera un altro giro con la stessa distanza"
+          hidden
+        >
+          <span aria-hidden="true">🔄</span>
+          <span>Altro giro</span>
+        </button>
+        <button
+          type="button"
+          id="btn-gpx"
+          class="btn btn--primary"
+          aria-label="Scarica file GPX del percorso"
+        >
+          <span aria-hidden="true">⬇</span>
+          <span>Scarica GPX</span>
+        </button>
+        <button
+          type="button"
+          id="btn-share"
+          class="btn btn--accent"
+          aria-label="Condividi il percorso"
+        >
+          <span aria-hidden="true">↗</span>
+          <span>Condividi</span>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       Toast container (top center) — ui.js crea toast figli dentro
+       ========================================================= -->
+  <div
+    id="toast-container"
+    class="toast-container"
+    role="status"
+    aria-live="polite"
+    aria-atomic="true"
+  ></div>
+
+  <!-- =========================================================
+       Vendor (scritti da altro agent)
+       ========================================================= -->
+  <script src="js/vendor/leaflet.js" defer></script>
+  <script src="js/vendor/chart.umd.js" defer></script>
+
+  <!-- Entry module -->
+  <script type="module" src="js/app.js"></script>
+
+  <!-- Service worker registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker
+          .register('sw.js')
+          .catch(function (err) {
+            console.warn('[Ciclovia] SW registration failed:', err);
+          });
+      });
+    }
+  </script>
+</body>
+</html>

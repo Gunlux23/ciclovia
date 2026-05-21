@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <title>Ciclovia — Unit Tests</title>
+  <style>
+    body { font-family: -apple-system, system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; background: #f5f5f0; color: #222; }
+    h1 { color: #2d5016; }
+    .test { padding: 0.6rem 0.9rem; margin: 0.4rem 0; border-radius: 6px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9rem; }
+    .pass { background: #d4edda; border-left: 4px solid #28a745; }
+    .fail { background: #f8d7da; border-left: 4px solid #dc3545; }
+    .name { font-weight: 600; }
+    .details { display: block; margin-top: 0.3rem; color: #555; white-space: pre-wrap; word-break: break-word; }
+    #summary { padding: 1rem; margin: 1rem 0; border-radius: 8px; font-weight: 600; }
+    #summary.ok { background: #d4edda; color: #155724; }
+    #summary.ko { background: #f8d7da; color: #721c24; }
+  </style>
+</head>
+<body>
+  <h1>Ciclovia — Unit Tests</h1>
+  <p>Apri questo file via server locale (es. <code>python3 -m http.server 8000</code>) e visita <code>/tests/test.html</code>. Gli ES module non funzionano da <code>file://</code>.</p>
+  <div id="summary">In esecuzione...</div>
+  <div id="results"></div>
+
+  <script type="module">
+    import * as stats from '../js/lib/stats.js';
+    import * as gpx from '../js/lib/gpx.js';
+    import * as share from '../js/lib/share.js';
+
+    const resultsEl = document.getElementById('results');
+    const summaryEl = document.getElementById('summary');
+    let passed = 0;
+    let failed = 0;
+
+    function assert(name, condition, details) {
+      const div = document.createElement('div');
+      div.className = 'test ' + (condition ? 'pass' : 'fail');
+      div.innerHTML = `<span class="name">${condition ? 'PASS' : 'FAIL'} — ${name}</span>`;
+      if (details) {
+        const d = document.createElement('span');
+        d.className = 'details';
+        d.textContent = typeof details === 'string' ? details : JSON.stringify(details, null, 2);
+        div.appendChild(d);
+      }
+      resultsEl.appendChild(div);
+      if (condition) passed++; else failed++;
+    }
+
+    function approxEqual(a, b, tol = 1) { return Math.abs(a - b) <= tol; }
+
+    // ────────────────────────────────────────────────────────────
+    // stats.compute — fixture BRouter con 3 segmenti
+    // ────────────────────────────────────────────────────────────
+    try {
+      const brouterFixture = {
+        type: 'FeatureCollection',
+        features: [{
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [7.5, 44.0, 500],
+              [7.51, 44.01, 510],
+              [7.52, 44.02, 520],
+              [7.53, 44.03, 530],
+            ],
+          },
+          properties: {
+            messages: [
+              ['Longitude', 'Latitude', 'Elevation', 'Distance', 'CostPerKm', 'ElevCost', 'TurnCost', 'NodeCost', 'InitialCost', 'WayTags', 'NodeTags', 'Time', 'Energy'],
+              ['7500000', '44000000', '500', '1000', '0', '0', '0', '0', '0', 'highway=track surface=gravel', '', '180', '0'],
+              ['7510000', '44010000', '510', '1000', '0', '0', '0', '0', '0', 'highway=secondary surface=asphalt', '', '180', '0'],
+              ['7520000', '44020000', '520', '1000', '0', '0', '0', '0', '0', 'highway=tertiary surface=asphalt', '', '180', '0'],
+            ],
+          },
+        }],
+      };
+
+      if (typeof stats.compute === 'function') {
+        const result = stats.compute(brouterFixture);
+        assert(
+          'stats.compute restituisce un oggetto con pctSterrato',
+          result && typeof result.pctSterrato === 'number',
+          result,
+        );
+        assert(
+          'stats.compute: pctSterrato ≈ 33 su fixture 1/3 gravel',
+          approxEqual(result.pctSterrato, 33, 2),
+          `Atteso ~33, ricevuto ${result?.pctSterrato}`,
+        );
+        assert(
+          'stats.compute: km totali ≈ 3',
+          approxEqual(result.km, 3, 0.5),
+          `Atteso ~3, ricevuto ${result?.km}`,
+        );
+      } else {
+        assert('stats.compute esiste come funzione', false, 'stats.compute non è esportato');
+      }
+    } catch (e) {
+      assert('stats.compute non lancia eccezioni', false, e.stack || e.message);
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // gpx.fromGeoJSON — 3 punti
+    // ────────────────────────────────────────────────────────────
+    try {
+      const geo = {
+        type: 'LineString',
+        coordinates: [
+          [7.5495, 44.3909, 530],
+          [7.6800, 44.3895, 480],
+          [7.8197, 44.3886, 395],
+        ],
+      };
+      if (typeof gpx.fromGeoJSON === 'function') {
+        const out = gpx.fromGeoJSON(geo, { name: 'Test Ciclovia' });
+        assert('gpx.fromGeoJSON ritorna stringa', typeof out === 'string', `tipo: ${typeof out}`);
+        assert('gpx contiene <trkpt', out.includes('<trkpt'), out.slice(0, 200));
+        assert('gpx contiene <ele>', out.includes('<ele>'), out.slice(0, 400));
+        assert('gpx contiene lat 44.3909', out.includes('44.3909'), null);
+        assert('gpx contiene lon 7.5495', out.includes('7.5495'), null);
+        assert('gpx contiene lon 7.8197', out.includes('7.8197'), null);
+      } else {
+        assert('gpx.fromGeoJSON esiste come funzione', false, 'gpx.fromGeoJSON non è esportato');
+      }
+    } catch (e) {
+      assert('gpx.fromGeoJSON non lancia eccezioni', false, e.stack || e.message);
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // share.serialize / deserialize — round-trip
+    // ────────────────────────────────────────────────────────────
+    try {
+      const payload = {
+        waypoints: [
+          { id: 'w1', lat: 44.3909, lon: 7.5495, label: 'Cuneo', source: 'search' },
+          { id: 'w2', lat: 44.3886, lon: 7.8197, label: 'Mondovì', source: 'search' },
+        ],
+        profile: 'trekking',
+      };
+      if (typeof share.serialize === 'function' && typeof share.deserialize === 'function') {
+        const str = share.serialize(payload);
+        assert('share.serialize ritorna stringa non vuota', typeof str === 'string' && str.length > 0, str);
+        const back = share.deserialize(str);
+        assert('share round-trip preserva profile', back && back.profile === 'trekking', back);
+        assert(
+          'share round-trip preserva numero waypoint',
+          back && Array.isArray(back.waypoints) && back.waypoints.length === 2,
+          back,
+        );
+        assert(
+          'share round-trip preserva coordinate primo waypoint',
+          back && back.waypoints[0] &&
+            approxEqual(back.waypoints[0].lat, 44.3909, 0.0001) &&
+            approxEqual(back.waypoints[0].lon, 7.5495, 0.0001),
+          back?.waypoints[0],
+        );
+        assert(
+          'share round-trip preserva label secondo waypoint',
+          back && back.waypoints[1] && back.waypoints[1].label === 'Mondovì',
+          back?.waypoints[1],
+        );
+      } else {
+        assert('share.serialize / deserialize esistono', false, 'share.serialize o share.deserialize non esportati');
+      }
+    } catch (e) {
+      assert('share round-trip non lancia eccezioni', false, e.stack || e.message);
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // Summary
+    // ────────────────────────────────────────────────────────────
+    summaryEl.textContent = `${passed} test passati, ${failed} falliti su ${passed + failed} totali`;
+    summaryEl.className = failed === 0 ? 'ok' : 'ko';
+  </script>
+</body>
+</html>
