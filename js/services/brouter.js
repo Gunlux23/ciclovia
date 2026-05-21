@@ -2,10 +2,15 @@ const BROUTER_URL = 'https://brouter.de/brouter';
 const TIMEOUT_MS = 15000;
 
 const PROFILE_MAP = {
-  // "Evita traffico" → fastbike-lowtraffic: diretto, qualsiasi tipo di strada,
-  // ma penalizza forte le strade ad alto traffico (primary/trunk/secondary).
-  // Più aderente alla richiesta utente del classico "safety" (che allungava troppo).
-  safety: 'fastbike-lowtraffic',
+  // "Evita traffico" → safety: profilo BRouter pensato esplicitamente per evitare
+  // il traffico (preferisce ciclabili, strade secondarie, anche al costo di
+  // deviazioni più lunghe). Richiesta utente: meglio +10/20% di km che strade
+  // trafficate. Se safety non trova nulla, la fallback chain in app.js prova
+  // 'fastbike-lowtraffic' (compromesso) e poi profili più permissivi.
+  safety: 'safety',
+  // Profilo "interno" non esposto in UI: usato dal solo fallback per "Evita traffico"
+  // quando safety puro fallisce. Tradeoff tra evita-traffico e diretto.
+  'fastbike-lowtraffic': 'fastbike-lowtraffic',
   trekking: 'trekking',
   gravel: 'gravel',
   fastbike: 'fastbike',

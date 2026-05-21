@@ -418,7 +418,7 @@ export function init(stateModule, mapApi, services, libs) {
   }
 
   const PROFILE_HINTS = {
-    safety: 'Strade poco trafficate, qualsiasi tipo',
+    safety: 'Ciclabili e strade secondarie (può allungare per evitare traffico)',
     trekking: 'Ciclabili e asfalto a basso traffico',
     gravel: 'Ciclabili, sterrati e strade bianche',
     fastbike: 'Solo asfalto, evita traffico',

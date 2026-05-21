@@ -97,10 +97,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Catena di fallback: profili sempre più permissivi finché uno restituisce
     // un percorso. Vale per tutte le modalità (passthrough, loop, estensione).
+    // Per "Evita traffico" anteponiamo `safety` (più aggressivo nell'evitare
+    // traffico ma con deviazioni lunghe), poi `fastbike-lowtraffic` come
+    // compromesso, e solo dopo i profili generici.
     const TAIL = ['trekking', 'fastbike', 'shortest', 'car-eco', 'car-fast'];
     const dedup = (arr) => [...new Set(arr)];
     const FALLBACK_CHAIN = {
-      safety: dedup(['safety', ...TAIL]),
+      safety: dedup(['safety', 'fastbike-lowtraffic', ...TAIL]),
       gravel: dedup(['gravel', ...TAIL]),
       mtb: dedup(['mtb', 'hiking-mountain', ...TAIL]),
       trekking: dedup(['trekking', ...TAIL]),
