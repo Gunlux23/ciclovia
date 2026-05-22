@@ -1190,7 +1190,36 @@ body[data-result-open="true"] .fab--gps {
    Cronologia percorsi
    ======================================================== */
 
-.sheet--history { z-index: 25; }
+/* Cronologia: overlay modale full-screen (mobile), panel centrato (desktop).
+   Deve sovrastare gli altri sheet (z-index 950/960). */
+.sheet--history {
+  position: fixed;
+  top: var(--topbar-h, 56px);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  z-index: 1000;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-radius: 0;
+  max-height: none;
+  padding-top: 0.5rem;
+  overflow-y: auto;
+}
+
+@media (min-width: 768px) {
+  .sheet--history {
+    top: calc(var(--topbar-h, 56px) + 16px);
+    bottom: 20px;
+    left: 50%;
+    right: auto;
+    width: min(520px, calc(100vw - 40px));
+    transform: translateX(-50%);
+    border-radius: var(--radius);
+    max-height: calc(100vh - var(--topbar-h) - 36px);
+  }
+}
 
 .sheet__title-counter {
   font-size: 0.85em;
@@ -1320,7 +1349,7 @@ body[data-result-open="true"] .fab--gps {
 .modal {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 1100;
   display: flex;
   align-items: center;
   justify-content: center;
