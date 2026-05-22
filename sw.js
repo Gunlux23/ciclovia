@@ -5,7 +5,7 @@
    - ciclovia-routes-v1  : cache-first, max 10 LRU
    ========================================================= */
 
-const SHELL_CACHE  = 'ciclovia-shell-v3';
+const SHELL_CACHE  = 'ciclovia-shell-v4';
 const TILES_CACHE  = 'ciclovia-tiles-v1';
 const ROUTES_CACHE = 'ciclovia-routes-v1';
 
@@ -14,40 +14,41 @@ const KNOWN_CACHES = [SHELL_CACHE, TILES_CACHE, ROUTES_CACHE];
 const TILES_MAX  = 200;
 const ROUTES_MAX = 10;
 
-/* App shell precache list. Mantienila sincronizzata con la struttura del repo. */
+/* App shell precache list. Path relativi al SW (es. /ciclovia/sw.js → ./ = /ciclovia/).
+   Funziona sia in root sia in sottocartella (GitHub Pages project site). */
 const SHELL_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-  '/css/style.css',
+  './',
+  './index.html',
+  './manifest.webmanifest',
+  './css/style.css',
 
   /* core JS */
-  '/js/app.js',
-  '/js/state.js',
-  '/js/map.js',
-  '/js/ui.js',
+  './js/app.js',
+  './js/state.js',
+  './js/map.js',
+  './js/ui.js',
 
   /* services */
-  '/js/services/brouter.js',
-  '/js/services/routePlanner.js',
-  '/js/services/nominatim.js',
-  '/js/services/geolocation.js',
-  '/js/services/overpass.js',
+  './js/services/brouter.js',
+  './js/services/routePlanner.js',
+  './js/services/nominatim.js',
+  './js/services/geolocation.js',
+  './js/services/overpass.js',
 
   /* lib */
-  '/js/lib/gpx.js',
-  '/js/lib/share.js',
-  '/js/lib/stats.js',
-  '/js/lib/elevation-chart.js',
+  './js/lib/gpx.js',
+  './js/lib/share.js',
+  './js/lib/stats.js',
+  './js/lib/elevation-chart.js',
 
   /* vendor */
-  '/js/vendor/leaflet.js',
-  '/js/vendor/leaflet.css',
-  '/js/vendor/chart.umd.js',
+  './js/vendor/leaflet.js',
+  './js/vendor/leaflet.css',
+  './js/vendor/chart.umd.js',
 
   /* icons */
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
 ];
 
 /* ---------- helpers ---------- */
@@ -195,13 +196,13 @@ self.addEventListener('fetch', (event) => {
           const res = await fetch(req);
           // Solo per navigazione: serve index.html offline come fallback
           if (req.mode === 'navigate' && (!res || !res.ok)) {
-            const fallback = await cache.match('/index.html');
+            const fallback = await cache.match('./index.html');
             if (fallback) return fallback;
           }
           return res;
         } catch (_) {
           if (req.mode === 'navigate') {
-            const fallback = await cache.match('/index.html');
+            const fallback = await cache.match('./index.html');
             if (fallback) return fallback;
           }
           return new Response('', { status: 504, statusText: 'Offline' });
