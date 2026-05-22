@@ -343,11 +343,10 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
       const finalKm = trimResult.trimmedMeters > 0
         ? geojsonLengthKm(trimResult.geojson)
         : km;
-      const note = trimResult.trimmedMeters > 0
-        ? `Rimosse appendici A/R per ~${Math.round(trimResult.trimmedMeters)}m.`
-        : (isOverlapAcceptable(attemptBest.overlap)
-            ? null
-            : `Anello con ~${Math.round(attemptBest.overlap.meters)}m di tratto comune (rete stradale limitata in zona).`);
+      // Warning solo per overlap RESIDUO (post-trim), non per le appendici tagliate.
+      const note = !trimResult.trimmedMeters && !isOverlapAcceptable(attemptBest.overlap)
+        ? `Anello con ~${Math.round(attemptBest.overlap.meters)}m di tratto comune (rete stradale limitata in zona).`
+        : null;
       return {
         geojson: trimResult.geojson,
         messages: attemptBest.resp.messages,
@@ -373,9 +372,8 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
       ? geojsonLengthKm(trimResult.geojson)
       : best.km;
     const parts = [`Distanza approssimativa: ${finalKm.toFixed(1)} km (target ${targetKm} km)`];
-    if (trimResult.trimmedMeters > 0) {
-      parts.push(`Rimosse appendici A/R per ~${Math.round(trimResult.trimmedMeters)}m`);
-    } else if (!isOverlapAcceptable(best.overlap)) {
+    // Warning solo per overlap RESIDUO (post-trim), non per le appendici tagliate.
+    if (!trimResult.trimmedMeters && !isOverlapAcceptable(best.overlap)) {
       parts.push(`Tratto comune: ~${Math.round(best.overlap.meters)}m`);
     }
     return {
