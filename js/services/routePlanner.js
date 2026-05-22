@@ -24,9 +24,12 @@ const MAX_ITERATIONS = 5;     // tetto iterazioni per anello / estensione
 const EARTH_R = 6371000;      // raggio terrestre medio in metri
 
 // Anello: parametri per evitare sovrapposizioni andata/ritorno.
-const OVERLAP_THRESHOLD = 0.10;       // 10% di celle visitate >1 volta = accettabile
-const OVERLAP_ROTATION_RAD = Math.PI / 3;  // 60° per ogni nuovo tentativo
-const OVERLAP_MAX_ATTEMPTS = 3;       // tentativi di rotazione per ridurre overlap
+const OVERLAP_THRESHOLD = 0.04;       // 4% di celle visitate >1 volta = accettabile
+const OVERLAP_THRESHOLD_M = 300;      // soglia ASSOLUTA: max 300m di tratto comune
+                                      // (la % da sola scala male su giri lunghi: 1km
+                                      // di A/R su 100km è solo 1% ma resta fastidioso)
+const OVERLAP_ROTATION_RAD = Math.PI / 4;  // 45° per ogni nuovo tentativo
+const OVERLAP_MAX_ATTEMPTS = 5;       // 5 rotazioni → copre fino a 180° con step 45°
 const OVERLAP_CELL_M = 15;            // ~15 m per cella di discretizzazione
 
 function toRad(deg) {
@@ -101,9 +104,9 @@ function bearingRad(lat1, lon1, lat2, lon2) {
 // non vengono erroneamente contate come overlap.
 //
 // 1°/(60 nautical miles) ≈ 0.000135° ≈ 15m. Usiamo 7400 = 1/0.000135.
-function measureOverlapPct(geojson) {
+function measureOverlap(geojson) {
   const coords = (geojson && geojson.coordinates) || [];
-  if (coords.length < 2) return 0;
+  if (coords.length < 2) return { pct: 0, meters: 0 };
   const cells = new Map();
   const scale = 1000 * (60 / OVERLAP_CELL_M);  // ≈ 4000 per OVERLAP_CELL_M=15
   for (const [lon, lat] of coords) {
@@ -112,7 +115,18 @@ function measureOverlapPct(geojson) {
   }
   let overlapping = 0;
   for (const c of cells.values()) if (c > 1) overlapping++;
-  return cells.size > 0 ? overlapping / cells.size : 0;
+  return {
+    pct: cells.size > 0 ? overlapping / cells.size : 0,
+    meters: overlapping * OVERLAP_CELL_M,
+  };
+}
+
+// Un tentativo è considerato "pulito" se sia % sia metri assoluti sono sotto soglia.
+// Serve la AND perchè:
+//   - solo % → fallisce su giri lunghi (1km su 100km = 1% ma è fastidioso)
+//   - solo m → fallisce su giri corti (200m su 5km è il 4% del giro)
+function isOverlapAcceptable(overlap) {
+  return overlap.pct <= OVERLAP_THRESHOLD && overlap.meters <= OVERLAP_THRESHOLD_M;
 }
 
 // Errore astratto per quando un'iterazione viene cancellata dall'utente.
@@ -144,7 +158,7 @@ async function tryLoopQuadrilateral({ origin, profile, R, θ, signal }) {
   return {
     resp,
     km: geojsonLengthKm(resp.geojson),
-    overlap: measureOverlapPct(resp.geojson),
+    overlap: measureOverlap(resp.geojson),  // { pct, meters }
     waypoints,
   };
 }
@@ -155,8 +169,8 @@ async function tryLoopQuadrilateral({ origin, profile, R, θ, signal }) {
  * Strategia a due livelli:
  *   - Ciclo esterno: aggiusta il RAGGIO finché la distanza ottenuta entra
  *     nella tolleranza ±10% del target.
- *   - Ciclo interno (per ogni R): prova fino a 3 rotazioni di 60° per ridurre
- *     l'overlap (sovrapposizione andata/ritorno) sotto la soglia del 10%.
+ *   - Ciclo interno (per ogni R): prova fino a 5 rotazioni di 45° per ridurre
+ *     l'overlap (sovrapposizione andata/ritorno) sotto la soglia del 4%.
  *
  * Se la distanza converge ma l'overlap resta alto, ritorna comunque il
  * miglior tentativo (overlap minimo) con un warning all'utente.
@@ -187,8 +201,10 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
     }
 
     // Cerca il miglior tentativo a questo raggio variando θ se l'overlap è alto.
+    // "Miglior" = minor numero di metri sovrapposti (più rappresentativo della %
+    // su giri di lunghezze diverse).
     let attemptBest = null;
-    let attemptBestOverlap = Infinity;
+    let attemptBestMeters = Infinity;
     let lastKm = null;
     let attemptErr = null;
 
@@ -198,18 +214,15 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
         const t = await tryLoopQuadrilateral({ origin, profile, R, θ, signal });
         lastKm = t.km;
 
-        // Memorizza tentativo con overlap minore a questo R.
-        if (t.overlap < attemptBestOverlap) {
+        if (t.overlap.meters < attemptBestMeters) {
           attemptBest = t;
-          attemptBestOverlap = t.overlap;
+          attemptBestMeters = t.overlap.meters;
         }
 
-        // Se overlap è già accettabile, non serve ruotare ulteriormente.
-        if (t.overlap <= OVERLAP_THRESHOLD) break;
+        if (isOverlapAcceptable(t.overlap)) break;
       } catch (err) {
         if (err.name === 'PlanAbortError') throw err;
         attemptErr = err;
-        // Continua con la rotazione successiva.
       }
     }
 
@@ -231,6 +244,7 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
 
     // In tolleranza? ritorna subito (anche se overlap > soglia: useremo warning).
     if (km >= targetKm * (1 - TOLERANCE) && km <= targetKm * (1 + TOLERANCE)) {
+      const acceptable = isOverlapAcceptable(attemptBest.overlap);
       return {
         geojson: attemptBest.resp.geojson,
         messages: attemptBest.resp.messages,
@@ -238,9 +252,9 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
         mode: 'loop',
         iterations: i + 1,
         finalKm: km,
-        warning: attemptBestOverlap > OVERLAP_THRESHOLD
-          ? `Anello con ${Math.round(attemptBestOverlap * 100)}% di tratto comune (rete stradale limitata in zona).`
-          : null,
+        warning: acceptable
+          ? null
+          : `Anello con ~${Math.round(attemptBest.overlap.meters)}m di tratto comune (rete stradale limitata in zona).`,
       };
     }
 
@@ -252,8 +266,8 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
 
   // Esaurite iterazioni distanza: ritorna miglior tentativo globale.
   if (best) {
-    const overlapNote = best.overlap > OVERLAP_THRESHOLD
-      ? ` Tratto comune: ${Math.round(best.overlap * 100)}%.`
+    const overlapNote = !isOverlapAcceptable(best.overlap)
+      ? ` Tratto comune: ~${Math.round(best.overlap.meters)}m.`
       : '';
     return {
       geojson: best.resp.geojson,
