@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "io.github.gunlux23.ciclovia",
+        "sha256_cert_fingerprints": ["48:91:DC:D7:BF:EC:B5:0B:14:0B:BE:67:41:34:EC:EE:0B:DB:AC:15:9C:F6:B6:55:D2:15:B3:99:D8:71:84:F8"]
+      }
+    }]

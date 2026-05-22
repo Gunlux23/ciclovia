@@ -21,3 +21,10 @@ fontana.png
 # Server log temporanei
 /tmp/
 *.log
+
+# Build APK/AAB (binari, non versionati)
+dist/
+*.apk
+*.aab
+*.keystore
+*.jks
