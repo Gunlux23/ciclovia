@@ -99,6 +99,7 @@ export function init(stateModule, mapApi, services, libs) {
     historyPrefFifo: document.getElementById('history-pref-fifo'),
     historyPrefManual: document.getElementById('history-pref-manual'),
     btnHistoryClear: document.getElementById('btn-history-clear'),
+    historyFooter: document.getElementById('history-footer'),
     modalHistoryFull: document.getElementById('modal-history-full'),
     modalHistoryFullBody: document.getElementById('modal-history-full-body'),
     modalHistoryFullFooter: document.getElementById('modal-history-full-footer'),
@@ -539,11 +540,18 @@ export function init(stateModule, mapApi, services, libs) {
     return [tappe, ascent].filter(Boolean).join(' · ');
   }
 
+  const ICON_RENAME = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+  const ICON_DELETE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`;
+
   function renderHistory() {
     if (!elements.historyList) return;
     const entries = routeHistory.list();
     if (elements.historyCounter) {
       elements.historyCounter.textContent = `(${entries.length}/${routeHistory.MAX})`;
+    }
+    // Mostra "Svuota cronologia" solo se ≥5 entry (riduce rischio click accidentale)
+    if (elements.historyFooter) {
+      elements.historyFooter.hidden = entries.length < 5;
     }
     if (entries.length === 0) {
       elements.historyList.innerHTML = '';
@@ -559,8 +567,8 @@ export function init(stateModule, mapApi, services, libs) {
         <div class="history-card__label">${escapeHtml(formatHistoryEntryLabel(e))}</div>
         <div class="history-card__meta">${escapeHtml(formatHistoryEntryMeta(e))}</div>
         <div class="history-card__actions">
-          <button type="button" class="history-card__action" data-action="rename" data-id="${escapeHtml(e.id)}" aria-label="Rinomina percorso">✎</button>
-          <button type="button" class="history-card__action" data-action="delete" data-id="${escapeHtml(e.id)}" aria-label="Elimina percorso">🗑</button>
+          <button type="button" class="history-card__action" data-action="rename" data-id="${escapeHtml(e.id)}" aria-label="Rinomina percorso">${ICON_RENAME}</button>
+          <button type="button" class="history-card__action" data-action="delete" data-id="${escapeHtml(e.id)}" aria-label="Elimina percorso">${ICON_DELETE}</button>
         </div>
       </li>
     `).join('');
@@ -602,9 +610,14 @@ export function init(stateModule, mapApi, services, libs) {
         );
         if (nuovo !== null) routeHistory.rename(id, nuovo);
       } else if (action === 'delete') {
-        if (window.confirm('Eliminare questo percorso dalla cronologia?')) {
-          routeHistory.remove(id);
-        }
+        const entry = routeHistory.get(id);
+        const label = entry ? formatHistoryEntryLabel(entry) : 'questo percorso';
+        showConfirmModal({
+          title: 'Elimina percorso',
+          message: `Eliminare "${label}" dalla cronologia?`,
+          confirmLabel: 'Elimina',
+          danger: true,
+        }, () => routeHistory.remove(id));
       }
       return;
     }
@@ -621,8 +634,39 @@ export function init(stateModule, mapApi, services, libs) {
   }
 
   function handleHistoryClear() {
-    if (!window.confirm("Svuotare TUTTA la cronologia? L'azione non è reversibile.")) return;
-    routeHistory.clear();
+    showConfirmModal({
+      title: 'Svuota cronologia',
+      message: `Eliminare tutti i ${routeHistory.list().length} percorsi salvati? L'azione non è reversibile.`,
+      confirmLabel: 'Svuota tutto',
+      danger: true,
+    }, () => routeHistory.clear());
+  }
+
+  function showConfirmModal({ title, message, confirmLabel, danger }, onConfirm) {
+    if (!elements.modalHistoryFull || !elements.modalHistoryFullBody || !elements.modalHistoryFullFooter) return;
+    const titleEl = document.getElementById('modal-history-full-title');
+    if (titleEl) titleEl.textContent = title;
+    pendingHistoryEntry = null; // disambigua dal flow overflow
+    elements.modalHistoryFullBody.innerHTML = `<p>${escapeHtml(message)}</p>`;
+    elements.modalHistoryFullFooter.innerHTML = `
+      <button type="button" class="btn btn--ghost" id="confirm-cancel">Annulla</button>
+      <button type="button" class="btn ${danger ? 'btn--danger-solid' : 'btn--primary'}" id="confirm-ok">${escapeHtml(confirmLabel || 'Conferma')}</button>
+    `;
+    document.getElementById('confirm-cancel')?.addEventListener('click', () => {
+      hideModal(elements.modalHistoryFull);
+      restoreModalTitle();
+    });
+    document.getElementById('confirm-ok')?.addEventListener('click', () => {
+      hideModal(elements.modalHistoryFull);
+      restoreModalTitle();
+      try { onConfirm && onConfirm(); } catch (e) { console.warn(e); }
+    });
+    showModal(elements.modalHistoryFull);
+  }
+
+  function restoreModalTitle() {
+    const titleEl = document.getElementById('modal-history-full-title');
+    if (titleEl) titleEl.textContent = 'Cronologia piena';
   }
 
   function handleHistoryPrefChange(e) {

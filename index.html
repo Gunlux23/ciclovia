@@ -307,7 +307,7 @@
         Nessun percorso salvato. Calcola un percorso per iniziare.
       </p>
 
-      <div class="history-footer">
+      <div class="history-footer" id="history-footer" hidden>
         <button
           type="button"
           id="btn-history-clear"
@@ -334,6 +334,13 @@
     <div class="modal__panel">
       <header class="modal__header">
         <h2 class="modal__title" id="modal-history-full-title">Cronologia piena</h2>
+        <button
+          type="button"
+          class="modal__close"
+          id="modal-history-full-close"
+          aria-label="Chiudi"
+          data-close="1"
+        >×</button>
       </header>
       <div class="modal__body" id="modal-history-full-body">
         <!-- popolato dinamicamente -->
