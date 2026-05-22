@@ -217,15 +217,21 @@ function checkAbort(signal) {
 // Calcola un tentativo di anello con QUADRILATERO: 3 waypoint a θ, θ+90°, θ+180°
 // distribuiti su un semicerchio (forma "a ferro di cavallo"). Più strade
 // differenti rispetto al triangolo precedente → minor probabilità di overlap.
-async function tryLoopQuadrilateral({ origin, profile, R, θ, signal, nogos }) {
+async function tryLoopQuadrilateral({ origin, profile, R, θ, signal, nogos, skipMid }) {
+  // skipMid: indice del waypoint intermedio da OMETTERE (1=a, 2=b, 3=c).
+  // Serve a "potare" un vertice del quadrilatero quando questo forza
+  // un'appendice A/R inutile (zona senza alternative).
   const a = destinationPoint(origin.lat, origin.lon, R, θ);
   const b = destinationPoint(origin.lat, origin.lon, R, θ + Math.PI / 2);
   const c = destinationPoint(origin.lat, origin.lon, R, θ + Math.PI);
-  const waypoints = [
+  const full = [
     { lat: origin.lat, lon: origin.lon },
     a, b, c,
     { lat: origin.lat, lon: origin.lon },
   ];
+  const waypoints = skipMid
+    ? full.filter((_, i) => i !== skipMid)
+    : full;
   const resp = await brouter.fetchRoute(waypoints, profile, { nogos });
   checkAbort(signal);
   return {
@@ -233,7 +239,29 @@ async function tryLoopQuadrilateral({ origin, profile, R, θ, signal, nogos }) {
     km: geojsonLengthKm(resp.geojson),
     overlap: measureOverlap(resp.geojson),
     waypoints,
+    midPoints: { a, b, c },
   };
+}
+
+// Distanza minima fra waypoint (a, b o c) e uno qualunque dei centroidi
+// dei cluster overlap. Se < soglia → il waypoint è probabilmente la causa
+// dell'appendice (BRouter va e torna per raggiungerlo).
+function findWaypointInsideOverlap(midPoints, overlapCoords, thresholdM = 250) {
+  if (!midPoints || !overlapCoords?.length) return null;
+  const points = [
+    { idx: 1, p: midPoints.a },
+    { idx: 2, p: midPoints.b },
+    { idx: 3, p: midPoints.c },
+  ];
+  let best = null;
+  let bestDist = Infinity;
+  for (const { idx, p } of points) {
+    for (const o of overlapCoords) {
+      const d = haversineM(p, o);
+      if (d < bestDist) { bestDist = d; best = idx; }
+    }
+  }
+  return bestDist <= thresholdM ? best : null;
 }
 
 /**
@@ -308,35 +336,63 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
       continue;
     }
 
-    // RETRY CON NOGOS: se il miglior tentativo ha ancora overlap inaccettabile,
-    // costruisci zone "nogo" dalle celle sovrapposte e ritenta sullo stesso θ
-    // forzando BRouter ad evitarle. È efficace per "appendici" di andata/ritorno
-    // su singole strade dove le rotazioni non hanno alternative geometriche.
+    // RECUPERO OVERLAP — strategia a due livelli per eliminare A/R inutili
+    // senza forzare il passaggio su strade trafficate.
     //
-    // ATTENZIONE — Priorità utente: evitare strade trafficate sopra ogni cosa.
-    // Se BRouter aggira il nogo passando da strade trafficate, di solito il
-    // percorso risulta MOLTO PIÙ CORTO (le trafficate sono più dirette dei
-    // raccordi tranquilli). Quindi: accetta il retry solo se:
-    //   - migliora overlap di almeno 200m (riduzione reale, non marginale)
-    //   - non accorcia di oltre il 15% (sintomo di "scorciatoia trafficata")
+    // Priorità utente: evitare strade trafficate sopra ogni cosa.
+    // Se BRouter aggira il problema passando da strade trafficate, il percorso
+    // di solito risulta MOLTO PIÙ CORTO (sono più dirette dei raccordi
+    // tranquilli). Useremo questa metrica come segnale "ha barato".
     if (!isOverlapAcceptable(attemptBest.overlap) && attemptBest.overlap.overlapCoords?.length) {
-      const nogos = buildNogosFromOverlap(attemptBest.overlap.overlapCoords);
-      if (nogos.length > 0) {
+
+      // LIVELLO 1 — POTATURA: l'overlap potrebbe essere causato da un
+      // waypoint del quadrilatero piazzato in una zona "senza uscita"
+      // (BRouter ci va e torna per raggiungerlo). Se uno dei 3 waypoint
+      // intermedi è vicino al cluster overlap, prova a rimuoverlo: il
+      // loop diventa un triangolo che salta quella zona.
+      const culprit = findWaypointInsideOverlap(
+        attemptBest.midPoints,
+        attemptBest.overlap.overlapCoords,
+      );
+      if (culprit !== null) {
         try {
-          const tNogo = await tryLoopQuadrilateral({
-            origin, profile, R, θ: attemptBestθ, signal, nogos,
+          const tPrune = await tryLoopQuadrilateral({
+            origin, profile, R, θ: attemptBestθ, signal, skipMid: culprit,
           });
-          const overlapImproved = (attemptBest.overlap.meters - tNogo.overlap.meters) >= 200;
-          const notShortcut = tNogo.km >= attemptBest.km * 0.85;
+          const overlapImproved = (attemptBest.overlap.meters - tPrune.overlap.meters) >= 200;
+          // Per la potatura accettiamo un accorciamento più ampio (-25%):
+          // togliere un lato del quadrilatero ACCORCIA naturalmente il giro,
+          // e non significa che il routing sia caduto su strade trafficate.
+          const notShortcut = tPrune.km >= attemptBest.km * 0.75;
           if (overlapImproved && notShortcut) {
-            attemptBest = tNogo;
-            attemptBestMeters = tNogo.overlap.meters;
+            attemptBest = tPrune;
+            attemptBestMeters = tPrune.overlap.meters;
           }
-          // Altrimenti: tieni l'originale (con A/R su strada tranquilla)
-          // perchè preferiamo un anello con A/R sulle ciclabili che una
-          // scorciatoia sulle trafficate.
         } catch (err) {
           if (err.name === 'PlanAbortError') throw err;
+        }
+      }
+
+      // LIVELLO 2 — NOGOS: se la potatura non ha aiutato (o non era applicabile),
+      // costruisci zone vietate dalle celle sovrapposte e ritenta sullo stesso θ.
+      if (!isOverlapAcceptable(attemptBest.overlap) && attemptBest.overlap.overlapCoords?.length) {
+        const nogos = buildNogosFromOverlap(attemptBest.overlap.overlapCoords);
+        if (nogos.length > 0) {
+          try {
+            const tNogo = await tryLoopQuadrilateral({
+              origin, profile, R, θ: attemptBestθ, signal, nogos,
+            });
+            const overlapImproved = (attemptBest.overlap.meters - tNogo.overlap.meters) >= 200;
+            // Per i nogos siamo più severi (-15%) perchè un percorso molto più
+            // corto suggerisce che BRouter ha scelto strade dirette/trafficate.
+            const notShortcut = tNogo.km >= attemptBest.km * 0.85;
+            if (overlapImproved && notShortcut) {
+              attemptBest = tNogo;
+              attemptBestMeters = tNogo.overlap.meters;
+            }
+          } catch (err) {
+            if (err.name === 'PlanAbortError') throw err;
+          }
         }
       }
     }
