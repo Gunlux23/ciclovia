@@ -217,10 +217,10 @@ function checkAbort(signal) {
 // Calcola un tentativo di anello con QUADRILATERO: 3 waypoint a θ, θ+90°, θ+180°
 // distribuiti su un semicerchio (forma "a ferro di cavallo"). Più strade
 // differenti rispetto al triangolo precedente → minor probabilità di overlap.
-async function tryLoopQuadrilateral({ origin, profile, R, θ, signal, nogos, skipMid }) {
-  // skipMid: indice del waypoint intermedio da OMETTERE (1=a, 2=b, 3=c).
-  // Serve a "potare" un vertice del quadrilatero quando questo forza
-  // un'appendice A/R inutile (zona senza alternative).
+async function tryLoopQuadrilateral({ origin, profile, R, θ, signal, nogos, skipMids }) {
+  // skipMids: array di indici dei waypoint intermedi da OMETTERE
+  //   1 = a (θ), 2 = b (θ+90°), 3 = c (θ+180°).
+  // Serve a "potare" uno o più vertici quando essi forzano appendici A/R inutili.
   const a = destinationPoint(origin.lat, origin.lon, R, θ);
   const b = destinationPoint(origin.lat, origin.lon, R, θ + Math.PI / 2);
   const c = destinationPoint(origin.lat, origin.lon, R, θ + Math.PI);
@@ -229,9 +229,8 @@ async function tryLoopQuadrilateral({ origin, profile, R, θ, signal, nogos, ski
     a, b, c,
     { lat: origin.lat, lon: origin.lon },
   ];
-  const waypoints = skipMid
-    ? full.filter((_, i) => i !== skipMid)
-    : full;
+  const skipSet = new Set(Array.isArray(skipMids) ? skipMids : []);
+  const waypoints = full.filter((_, i) => !skipSet.has(i));
   const resp = await brouter.fetchRoute(waypoints, profile, { nogos });
   checkAbort(signal);
   return {
@@ -243,25 +242,31 @@ async function tryLoopQuadrilateral({ origin, profile, R, θ, signal, nogos, ski
   };
 }
 
-// Distanza minima fra waypoint (a, b o c) e uno qualunque dei centroidi
-// dei cluster overlap. Se < soglia → il waypoint è probabilmente la causa
-// dell'appendice (BRouter va e torna per raggiungerlo).
-function findWaypointInsideOverlap(midPoints, overlapCoords, thresholdM = 250) {
-  if (!midPoints || !overlapCoords?.length) return null;
+// Identifica tutti i waypoint intermedi (a, b, c) che cadono "dentro" un
+// cluster di overlap: cioè a meno di `thresholdM` da almeno un centroide.
+// Sono i candidati alla potatura. Ritorna gli indici (sottinsieme di [1,2,3]).
+//
+// IMPORTANTE: non lasciamo mai meno di 1 waypoint intermedio (altrimenti il
+// loop degenera in A/R puro). Quindi se ne troviamo 3 colpevoli, ne togliamo
+// al massimo 2.
+function findWaypointsInsideOverlap(midPoints, overlapCoords, thresholdM = 250) {
+  if (!midPoints || !overlapCoords?.length) return [];
   const points = [
     { idx: 1, p: midPoints.a },
     { idx: 2, p: midPoints.b },
     { idx: 3, p: midPoints.c },
   ];
-  let best = null;
-  let bestDist = Infinity;
+  const culprits = [];
   for (const { idx, p } of points) {
+    let minDist = Infinity;
     for (const o of overlapCoords) {
       const d = haversineM(p, o);
-      if (d < bestDist) { bestDist = d; best = idx; }
+      if (d < minDist) minDist = d;
     }
+    if (minDist <= thresholdM) culprits.push({ idx, dist: minDist });
   }
-  return bestDist <= thresholdM ? best : null;
+  culprits.sort((a, b) => a.dist - b.dist);
+  return culprits.slice(0, 2).map((c) => c.idx);
 }
 
 /**
@@ -345,31 +350,43 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
     // tranquilli). Useremo questa metrica come segnale "ha barato".
     if (!isOverlapAcceptable(attemptBest.overlap) && attemptBest.overlap.overlapCoords?.length) {
 
-      // LIVELLO 1 — POTATURA: l'overlap potrebbe essere causato da un
-      // waypoint del quadrilatero piazzato in una zona "senza uscita"
-      // (BRouter ci va e torna per raggiungerlo). Se uno dei 3 waypoint
-      // intermedi è vicino al cluster overlap, prova a rimuoverlo: il
-      // loop diventa un triangolo che salta quella zona.
-      const culprit = findWaypointInsideOverlap(
+      // LIVELLO 1 — POTATURA: l'overlap può essere causato da uno o più
+      // waypoint del quadrilatero piazzati in zone "senza uscita" (BRouter
+      // ci va e torna per raggiungerli). Identifico TUTTI i waypoint vicini
+      // a cluster overlap e provo combinazioni di rimozione, scegliendo la
+      // migliore.
+      const culprits = findWaypointsInsideOverlap(
         attemptBest.midPoints,
         attemptBest.overlap.overlapCoords,
       );
-      if (culprit !== null) {
-        try {
-          const tPrune = await tryLoopQuadrilateral({
-            origin, profile, R, θ: attemptBestθ, signal, skipMid: culprit,
-          });
-          const overlapImproved = (attemptBest.overlap.meters - tPrune.overlap.meters) >= 200;
-          // Per la potatura accettiamo un accorciamento più ampio (-25%):
-          // togliere un lato del quadrilatero ACCORCIA naturalmente il giro,
-          // e non significa che il routing sia caduto su strade trafficate.
-          const notShortcut = tPrune.km >= attemptBest.km * 0.75;
-          if (overlapImproved && notShortcut) {
-            attemptBest = tPrune;
-            attemptBestMeters = tPrune.overlap.meters;
+      if (culprits.length > 0) {
+        // Combinazioni da provare, dalla più aggressiva (rimuovi entrambi)
+        // alla più conservativa (rimuovi uno solo).
+        const combos = [];
+        if (culprits.length >= 2) combos.push(culprits.slice(0, 2)); // entrambi
+        for (const c of culprits) combos.push([c]);                  // uno solo
+
+        for (const skipMids of combos) {
+          try {
+            const tPrune = await tryLoopQuadrilateral({
+              origin, profile, R, θ: attemptBestθ, signal, skipMids,
+            });
+            const overlapImproved = (attemptBest.overlap.meters - tPrune.overlap.meters) >= 200;
+            // Per la potatura accettiamo accorciamenti più ampi:
+            //   -25% se rimuoviamo 1 waypoint
+            //   -40% se ne rimuoviamo 2 (togliere 2 lati su 4 accorcia molto
+            //     e in genere è ancora un giro "decente")
+            const minRatio = skipMids.length >= 2 ? 0.60 : 0.75;
+            const notShortcut = tPrune.km >= attemptBest.km * minRatio;
+            if (overlapImproved && notShortcut) {
+              attemptBest = tPrune;
+              attemptBestMeters = tPrune.overlap.meters;
+              // Se ora va bene, esci dal loop combos
+              if (isOverlapAcceptable(tPrune.overlap)) break;
+            }
+          } catch (err) {
+            if (err.name === 'PlanAbortError') throw err;
           }
-        } catch (err) {
-          if (err.name === 'PlanAbortError') throw err;
         }
       }
 
