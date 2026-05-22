@@ -34,7 +34,7 @@ export class RouteServiceError extends Error {
   }
 }
 
-function buildUrl(waypoints, profile) {
+function buildUrl(waypoints, profile, nogos) {
   const lonlats = waypoints.map((w) => `${w.lon},${w.lat}`).join('|');
   const brouterProfile = PROFILE_MAP[profile] || 'trekking';
   const params = new URLSearchParams({
@@ -43,10 +43,18 @@ function buildUrl(waypoints, profile) {
     alternativeidx: '0',
     format: 'geojson',
   });
+  // nogos: array di { lat, lon, radiusM } — zone vietate al routing.
+  // Sintassi BRouter: nogos=lon,lat,radius|lon,lat,radius (radius in metri).
+  if (Array.isArray(nogos) && nogos.length > 0) {
+    const nogoStr = nogos
+      .map((n) => `${n.lon.toFixed(6)},${n.lat.toFixed(6)},${Math.round(n.radiusM || 50)}`)
+      .join('|');
+    params.set('nogos', nogoStr);
+  }
   return `${BROUTER_URL}?${params.toString()}`;
 }
 
-export async function fetchRoute(waypoints, profile) {
+export async function fetchRoute(waypoints, profile, options = {}) {
   if (!Array.isArray(waypoints) || waypoints.length < 2) {
     throw new RouteServiceError('Servono almeno due punti per calcolare un percorso.');
   }
@@ -56,7 +64,7 @@ export async function fetchRoute(waypoints, profile) {
 
   let response;
   try {
-    response = await fetch(buildUrl(waypoints, profile), {
+    response = await fetch(buildUrl(waypoints, profile, options.nogos), {
       method: 'GET',
       signal: controller.signal,
     });

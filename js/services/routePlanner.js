@@ -106,19 +106,92 @@ function bearingRad(lat1, lon1, lat2, lon2) {
 // 1°/(60 nautical miles) ≈ 0.000135° ≈ 15m. Usiamo 7400 = 1/0.000135.
 function measureOverlap(geojson) {
   const coords = (geojson && geojson.coordinates) || [];
-  if (coords.length < 2) return { pct: 0, meters: 0 };
+  if (coords.length < 2) return { pct: 0, meters: 0, overlapCoords: [] };
+  // Mappa: cellKey → { count, lat, lon } (memorizza un sample per cella)
   const cells = new Map();
   const scale = 1000 * (60 / OVERLAP_CELL_M);  // ≈ 4000 per OVERLAP_CELL_M=15
   for (const [lon, lat] of coords) {
     const key = `${Math.round(lat * scale)},${Math.round(lon * scale)}`;
-    cells.set(key, (cells.get(key) || 0) + 1);
+    const c = cells.get(key);
+    if (c) c.count++;
+    else cells.set(key, { count: 1, lat, lon });
   }
   let overlapping = 0;
-  for (const c of cells.values()) if (c > 1) overlapping++;
+  const overlapCoords = [];
+  for (const cell of cells.values()) {
+    if (cell.count > 1) {
+      overlapping++;
+      overlapCoords.push({ lat: cell.lat, lon: cell.lon });
+    }
+  }
   return {
     pct: cells.size > 0 ? overlapping / cells.size : 0,
     meters: overlapping * OVERLAP_CELL_M,
+    overlapCoords,
   };
+}
+
+// Clustering "grow-from-seed" delle coordinate sovrapposte → punti nogo.
+// Due coordinate appartengono allo stesso cluster se distano ≤ NOGO_CLUSTER_M.
+// Per ogni cluster ritorna {lat, lon} = centroide, raggio = estensione/2 + buffer.
+const NOGO_CLUSTER_M = 80;        // distanza max per stessa zona
+const NOGO_MIN_RADIUS_M = 50;     // raggio minimo del nogo
+const NOGO_MAX_RADIUS_M = 200;    // raggio massimo (evita di bloccare zone enormi)
+const NOGO_BUFFER_M = 30;         // margine attorno al cluster
+const NOGO_MAX_COUNT = 6;         // massimo numero di nogo (URL BRouter lunga)
+const NOGO_MIN_SIZE = 3;          // ignora cluster di poche celle (rumore)
+
+function haversineM(a, b) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const x = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+
+function buildNogosFromOverlap(overlapCoords) {
+  if (!overlapCoords || overlapCoords.length < NOGO_MIN_SIZE) return [];
+  const used = new Array(overlapCoords.length).fill(false);
+  const clusters = [];
+
+  for (let i = 0; i < overlapCoords.length; i++) {
+    if (used[i]) continue;
+    const cluster = [overlapCoords[i]];
+    used[i] = true;
+    // Espandi cluster: ogni nuovo punto può attirarne altri (grow)
+    for (let g = 0; g < cluster.length; g++) {
+      for (let j = i + 1; j < overlapCoords.length; j++) {
+        if (used[j]) continue;
+        if (haversineM(cluster[g], overlapCoords[j]) <= NOGO_CLUSTER_M) {
+          cluster.push(overlapCoords[j]);
+          used[j] = true;
+        }
+      }
+    }
+    if (cluster.length >= NOGO_MIN_SIZE) clusters.push(cluster);
+  }
+
+  // Per ogni cluster: centroide + raggio basato sull'estensione
+  const nogos = clusters.map((cluster) => {
+    const lat = cluster.reduce((s, c) => s + c.lat, 0) / cluster.length;
+    const lon = cluster.reduce((s, c) => s + c.lon, 0) / cluster.length;
+    const center = { lat, lon };
+    let maxDist = 0;
+    for (const p of cluster) maxDist = Math.max(maxDist, haversineM(center, p));
+    const radiusM = Math.min(
+      NOGO_MAX_RADIUS_M,
+      Math.max(NOGO_MIN_RADIUS_M, maxDist + NOGO_BUFFER_M),
+    );
+    return { lat, lon, radiusM, size: cluster.length };
+  });
+
+  // Tieni solo i cluster più grandi (limita URL BRouter)
+  nogos.sort((a, b) => b.size - a.size);
+  return nogos.slice(0, NOGO_MAX_COUNT).map(({ lat, lon, radiusM }) => ({ lat, lon, radiusM }));
 }
 
 // Un tentativo è considerato "pulito" se sia % sia metri assoluti sono sotto soglia.
@@ -144,7 +217,7 @@ function checkAbort(signal) {
 // Calcola un tentativo di anello con QUADRILATERO: 3 waypoint a θ, θ+90°, θ+180°
 // distribuiti su un semicerchio (forma "a ferro di cavallo"). Più strade
 // differenti rispetto al triangolo precedente → minor probabilità di overlap.
-async function tryLoopQuadrilateral({ origin, profile, R, θ, signal }) {
+async function tryLoopQuadrilateral({ origin, profile, R, θ, signal, nogos }) {
   const a = destinationPoint(origin.lat, origin.lon, R, θ);
   const b = destinationPoint(origin.lat, origin.lon, R, θ + Math.PI / 2);
   const c = destinationPoint(origin.lat, origin.lon, R, θ + Math.PI);
@@ -153,12 +226,12 @@ async function tryLoopQuadrilateral({ origin, profile, R, θ, signal }) {
     a, b, c,
     { lat: origin.lat, lon: origin.lon },
   ];
-  const resp = await brouter.fetchRoute(waypoints, profile);
+  const resp = await brouter.fetchRoute(waypoints, profile, { nogos });
   checkAbort(signal);
   return {
     resp,
     km: geojsonLengthKm(resp.geojson),
-    overlap: measureOverlap(resp.geojson),  // { pct, meters }
+    overlap: measureOverlap(resp.geojson),
     waypoints,
   };
 }
@@ -208,6 +281,7 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
     let lastKm = null;
     let attemptErr = null;
 
+    let attemptBestθ = θBase;
     for (let rot = 0; rot < OVERLAP_MAX_ATTEMPTS; rot++) {
       const θ = θBase + rot * OVERLAP_ROTATION_RAD;
       try {
@@ -217,6 +291,7 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
         if (t.overlap.meters < attemptBestMeters) {
           attemptBest = t;
           attemptBestMeters = t.overlap.meters;
+          attemptBestθ = θ;
         }
 
         if (isOverlapAcceptable(t.overlap)) break;
@@ -231,6 +306,39 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
       lastErr = attemptErr;
       R *= 0.9;
       continue;
+    }
+
+    // RETRY CON NOGOS: se il miglior tentativo ha ancora overlap inaccettabile,
+    // costruisci zone "nogo" dalle celle sovrapposte e ritenta sullo stesso θ
+    // forzando BRouter ad evitarle. È efficace per "appendici" di andata/ritorno
+    // su singole strade dove le rotazioni non hanno alternative geometriche.
+    //
+    // ATTENZIONE — Priorità utente: evitare strade trafficate sopra ogni cosa.
+    // Se BRouter aggira il nogo passando da strade trafficate, di solito il
+    // percorso risulta MOLTO PIÙ CORTO (le trafficate sono più dirette dei
+    // raccordi tranquilli). Quindi: accetta il retry solo se:
+    //   - migliora overlap di almeno 200m (riduzione reale, non marginale)
+    //   - non accorcia di oltre il 15% (sintomo di "scorciatoia trafficata")
+    if (!isOverlapAcceptable(attemptBest.overlap) && attemptBest.overlap.overlapCoords?.length) {
+      const nogos = buildNogosFromOverlap(attemptBest.overlap.overlapCoords);
+      if (nogos.length > 0) {
+        try {
+          const tNogo = await tryLoopQuadrilateral({
+            origin, profile, R, θ: attemptBestθ, signal, nogos,
+          });
+          const overlapImproved = (attemptBest.overlap.meters - tNogo.overlap.meters) >= 200;
+          const notShortcut = tNogo.km >= attemptBest.km * 0.85;
+          if (overlapImproved && notShortcut) {
+            attemptBest = tNogo;
+            attemptBestMeters = tNogo.overlap.meters;
+          }
+          // Altrimenti: tieni l'originale (con A/R su strada tranquilla)
+          // perchè preferiamo un anello con A/R sulle ciclabili che una
+          // scorciatoia sulle trafficate.
+        } catch (err) {
+          if (err.name === 'PlanAbortError') throw err;
+        }
+      }
     }
 
     const km = attemptBest.km;
