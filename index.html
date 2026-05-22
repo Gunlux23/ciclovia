@@ -73,6 +73,7 @@
           hidden
         >
           <button type="button" role="menuitem" id="menu-about">Informazioni</button>
+          <button type="button" role="menuitem" id="menu-history">Cronologia</button>
           <button type="button" role="menuitem" id="menu-reset">Azzera percorso</button>
         </div>
       </div>
@@ -260,6 +261,88 @@
       </div>
     </div>
   </section>
+
+  <!-- =========================================================
+       Bottom sheet: Cronologia (nascosto fino ad apertura)
+       ========================================================= -->
+  <section
+    class="sheet sheet--history"
+    id="sheet-history"
+    aria-label="Cronologia percorsi"
+    hidden
+  >
+    <header class="sheet__header">
+      <h2 class="sheet__title">
+        <span>Cronologia</span>
+        <span class="sheet__title-counter" id="history-counter">(0/30)</span>
+      </h2>
+      <div class="sheet__header-actions">
+        <button
+          type="button"
+          id="sheet-history-close"
+          class="btn btn--ghost"
+          aria-label="Chiudi cronologia"
+        >
+          <span aria-hidden="true">×</span>
+          <span>Chiudi</span>
+        </button>
+      </div>
+    </header>
+
+    <div class="sheet__body" id="sheet-history-body">
+      <fieldset class="history-prefs">
+        <legend class="history-prefs__legend">Quando piena:</legend>
+        <label class="history-prefs__option">
+          <input type="radio" name="history-pref" value="fifo" id="history-pref-fifo" />
+          <span>Auto-elimina i più vecchi</span>
+        </label>
+        <label class="history-prefs__option">
+          <input type="radio" name="history-pref" value="manual" id="history-pref-manual" />
+          <span>Chiedo a me ogni volta</span>
+        </label>
+      </fieldset>
+
+      <ol class="history-list" id="history-list" aria-label="Elenco percorsi salvati"></ol>
+      <p class="history-empty" id="history-empty">
+        Nessun percorso salvato. Calcola un percorso per iniziare.
+      </p>
+
+      <div class="history-footer">
+        <button
+          type="button"
+          id="btn-history-clear"
+          class="btn btn--ghost btn--danger"
+        >
+          Svuota cronologia
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================
+       Modale: cronologia piena (scelta preferenza o eliminazione manuale)
+       ========================================================= -->
+  <div
+    class="modal"
+    id="modal-history-full"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="modal-history-full-title"
+    hidden
+  >
+    <div class="modal__backdrop" data-close="1"></div>
+    <div class="modal__panel">
+      <header class="modal__header">
+        <h2 class="modal__title" id="modal-history-full-title">Cronologia piena</h2>
+      </header>
+      <div class="modal__body" id="modal-history-full-body">
+        <!-- popolato dinamicamente -->
+      </div>
+      <footer class="modal__footer" id="modal-history-full-footer">
+        <!-- popolato dinamicamente -->
+      </footer>
+    </div>
+  </div>
 
   <!-- =========================================================
        Bottom sheet: Risultato (nascosto fino al calcolo)

@@ -3,6 +3,7 @@ import * as mapModule from './map.js';
 import * as ui from './ui.js';
 import * as brouter from './services/brouter.js';
 import * as routePlanner from './services/routePlanner.js';
+import * as routeHistory from './services/routeHistory.js';
 import * as nominatim from './services/nominatim.js';
 import * as geolocation from './services/geolocation.js';
 import * as overpass from './services/overpass.js';
@@ -200,6 +201,25 @@ document.addEventListener('DOMContentLoaded', () => {
     mapApi.clearFountains();
     mapApi.drawRoute(route.geojson, segments);
     mapApi.fitToRoute(route.geojson);
+
+    // Salva il calcolo riuscito in cronologia (se localStorage disponibile)
+    if (routeHistory.isStorageAvailable()) {
+      const addResult = routeHistory.add({
+        waypoints: snap.waypoints,
+        profile: usedProfile,
+        targetDistanceEnabled: snap.targetDistanceEnabled,
+        targetDistanceKm: snap.targetDistanceKm,
+        loopSeed: snap.loopSeed,
+        stats: {
+          distanceKm: route.stats.km,
+          ascentM: route.stats.dPos,
+          durationMin: route.stats.timeMin,
+        },
+      });
+      if (!addResult.added && addResult.reason === 'full' && uiApi.onHistoryFull) {
+        uiApi.onHistoryFull(addResult);
+      }
+    }
 
     // Feature 2: fontanelle lungo il percorso (fire-and-forget, non blocca l'UX).
     // Confronto su `routeKey` (stringa stabile attraverso deepCopy di state).

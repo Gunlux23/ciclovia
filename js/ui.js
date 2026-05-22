@@ -1,3 +1,5 @@
+import * as routeHistory from './services/routeHistory.js';
+
 const TOAST_DURATIONS = { info: 3000, success: 3000, error: 5000 };
 
 function $(id) {
@@ -87,6 +89,19 @@ export function init(stateModule, mapApi, services, libs) {
     tdInput: document.getElementById('td-input'),
     tdWarning: document.getElementById('td-warning'),
     tdHint: document.getElementById('td-hint'),
+    // Cronologia
+    menuHistory: document.getElementById('menu-history'),
+    sheetHistory: document.getElementById('sheet-history'),
+    sheetHistoryClose: document.getElementById('sheet-history-close'),
+    historyList: document.getElementById('history-list'),
+    historyEmpty: document.getElementById('history-empty'),
+    historyCounter: document.getElementById('history-counter'),
+    historyPrefFifo: document.getElementById('history-pref-fifo'),
+    historyPrefManual: document.getElementById('history-pref-manual'),
+    btnHistoryClear: document.getElementById('btn-history-clear'),
+    modalHistoryFull: document.getElementById('modal-history-full'),
+    modalHistoryFullBody: document.getElementById('modal-history-full-body'),
+    modalHistoryFullFooter: document.getElementById('modal-history-full-footer'),
   };
 
   let chartInstance = null;
@@ -484,6 +499,233 @@ export function init(stateModule, mapApi, services, libs) {
     if (handleEl) handleEl.setAttribute('aria-expanded', next === 'peek' ? 'false' : 'true');
   }
 
+  /* ===== Cronologia percorsi ===== */
+
+  let pendingHistoryEntry = null;
+  const MESI_BREVI = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic'];
+  const PROFILE_LABELS = {
+    safety: 'Evita traffico',
+    trekking: 'Trekking',
+    gravel: 'Gravel',
+    fastbike: 'Strada',
+    mtb: 'MTB',
+  };
+
+  function formatHistoryDate(iso) {
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return '';
+      return `${d.getDate()} ${MESI_BREVI[d.getMonth()]} ${d.getFullYear()}`;
+    } catch {
+      return '';
+    }
+  }
+
+  function formatHistoryEntryLabel(entry) {
+    if (entry.customName) return entry.customName;
+    const date = formatHistoryDate(entry.createdAt);
+    const km = Number.isFinite(entry.stats?.distanceKm)
+      ? `${entry.stats.distanceKm.toFixed(1)} km`
+      : '–';
+    const prof = PROFILE_LABELS[entry.profile] || entry.profile;
+    return `${date} · ${km} · ${prof}`;
+  }
+
+  function formatHistoryEntryMeta(entry) {
+    const tappe = entry.waypoints.length === 1 ? 'anello' : `${entry.waypoints.length} tappe`;
+    const ascent = Number.isFinite(entry.stats?.ascentM)
+      ? `${Math.round(entry.stats.ascentM)} m disliv.`
+      : null;
+    return [tappe, ascent].filter(Boolean).join(' · ');
+  }
+
+  function renderHistory() {
+    if (!elements.historyList) return;
+    const entries = routeHistory.list();
+    if (elements.historyCounter) {
+      elements.historyCounter.textContent = `(${entries.length}/${routeHistory.MAX})`;
+    }
+    if (entries.length === 0) {
+      elements.historyList.innerHTML = '';
+      elements.historyList.hidden = true;
+      if (elements.historyEmpty) elements.historyEmpty.hidden = false;
+      return;
+    }
+    elements.historyList.hidden = false;
+    if (elements.historyEmpty) elements.historyEmpty.hidden = true;
+
+    elements.historyList.innerHTML = entries.map((e) => `
+      <li class="history-card" data-id="${escapeHtml(e.id)}" tabindex="0" role="button" aria-label="Carica percorso: ${escapeHtml(formatHistoryEntryLabel(e))}">
+        <div class="history-card__label">${escapeHtml(formatHistoryEntryLabel(e))}</div>
+        <div class="history-card__meta">${escapeHtml(formatHistoryEntryMeta(e))}</div>
+        <div class="history-card__actions">
+          <button type="button" class="history-card__action" data-action="rename" data-id="${escapeHtml(e.id)}" aria-label="Rinomina percorso">✎</button>
+          <button type="button" class="history-card__action" data-action="delete" data-id="${escapeHtml(e.id)}" aria-label="Elimina percorso">🗑</button>
+        </div>
+      </li>
+    `).join('');
+  }
+
+  function syncHistoryPrefRadios() {
+    const pref = routeHistory.getPreference();
+    if (elements.historyPrefFifo) elements.historyPrefFifo.checked = pref === 'fifo';
+    if (elements.historyPrefManual) elements.historyPrefManual.checked = pref === 'manual';
+  }
+
+  function openHistorySheet() {
+    if (!elements.sheetHistory) return;
+    if (!routeHistory.isStorageAvailable()) {
+      showToast('Cronologia non disponibile (storage bloccato dal browser).', 'error');
+      return;
+    }
+    renderHistory();
+    syncHistoryPrefRadios();
+    elements.sheetHistory.hidden = false;
+  }
+
+  function closeHistorySheet() {
+    if (!elements.sheetHistory) return;
+    elements.sheetHistory.hidden = true;
+  }
+
+  function handleHistoryListClick(e) {
+    const actionBtn = e.target.closest?.('[data-action]');
+    if (actionBtn) {
+      e.stopPropagation?.();
+      const id = actionBtn.getAttribute('data-id');
+      const action = actionBtn.getAttribute('data-action');
+      if (action === 'rename') {
+        const current = routeHistory.get(id);
+        const nuovo = window.prompt(
+          'Nuovo nome del percorso (vuoto = rimuove il nome custom):',
+          current?.customName || '',
+        );
+        if (nuovo !== null) routeHistory.rename(id, nuovo);
+      } else if (action === 'delete') {
+        if (window.confirm('Eliminare questo percorso dalla cronologia?')) {
+          routeHistory.remove(id);
+        }
+      }
+      return;
+    }
+    const card = e.target.closest?.('.history-card');
+    if (card) {
+      const id = card.getAttribute('data-id');
+      const entry = routeHistory.get(id);
+      if (entry) {
+        stateModule.loadFromHistoryEntry(entry);
+        closeHistorySheet();
+        showToast('Percorso caricato — calcolo in corso…', 'info');
+      }
+    }
+  }
+
+  function handleHistoryClear() {
+    if (!window.confirm("Svuotare TUTTA la cronologia? L'azione non è reversibile.")) return;
+    routeHistory.clear();
+  }
+
+  function handleHistoryPrefChange(e) {
+    const val = e.target?.value;
+    if (val === 'fifo' || val === 'manual') {
+      routeHistory.setPreference(val);
+      showToast(
+        val === 'fifo'
+          ? 'Cronologia: auto-eliminerò i più vecchi.'
+          : 'Cronologia: chiederò a te ogni volta.',
+        'success',
+      );
+    }
+  }
+
+  function showModal(modal) { if (modal) modal.hidden = false; }
+  function hideModal(modal) { if (modal) modal.hidden = true; }
+
+  function onHistoryFull(addResult) {
+    pendingHistoryEntry = addResult.pendingEntry;
+    const pref = routeHistory.getPreference();
+    if (pref === null) {
+      renderModalChoosePreference();
+    } else {
+      renderModalManualPrune();
+    }
+    showModal(elements.modalHistoryFull);
+  }
+
+  function renderModalChoosePreference() {
+    if (!elements.modalHistoryFullBody || !elements.modalHistoryFullFooter) return;
+    elements.modalHistoryFullBody.innerHTML = `
+      <p>Hai raggiunto i ${routeHistory.MAX} percorsi salvati. Come vuoi gestire i prossimi?</p>
+    `;
+    elements.modalHistoryFullFooter.innerHTML = `
+      <button type="button" class="btn btn--primary" id="pref-fifo-btn">Auto-elimina i più vecchi</button>
+      <button type="button" class="btn btn--ghost" id="pref-manual-btn">Decido io ogni volta</button>
+    `;
+    document.getElementById('pref-fifo-btn')?.addEventListener('click', () => {
+      routeHistory.setPreference('fifo');
+      syncHistoryPrefRadios();
+      retryPendingAdd();
+    }, { once: true });
+    document.getElementById('pref-manual-btn')?.addEventListener('click', () => {
+      routeHistory.setPreference('manual');
+      syncHistoryPrefRadios();
+      renderModalManualPrune();
+    }, { once: true });
+  }
+
+  function renderModalManualPrune() {
+    if (!elements.modalHistoryFullBody || !elements.modalHistoryFullFooter) return;
+    const entries = routeHistory.list();
+    elements.modalHistoryFullBody.innerHTML = `
+      <p>Cronologia piena (${entries.length}/${routeHistory.MAX}). Seleziona quali percorsi eliminare per salvare il nuovo, oppure annulla.</p>
+      <ul class="modal__choice-list">
+        ${entries.map((e) => `
+          <li>
+            <label>
+              <input type="checkbox" value="${escapeHtml(e.id)}" />
+              <span>${escapeHtml(formatHistoryEntryLabel(e))}</span>
+            </label>
+          </li>
+        `).join('')}
+      </ul>
+    `;
+    elements.modalHistoryFullFooter.innerHTML = `
+      <button type="button" class="btn btn--ghost" id="prune-cancel">Annulla</button>
+      <button type="button" class="btn btn--primary" id="prune-confirm">Elimina selezionati e salva</button>
+    `;
+    document.getElementById('prune-cancel')?.addEventListener('click', () => {
+      pendingHistoryEntry = null;
+      hideModal(elements.modalHistoryFull);
+      showToast('Percorso visualizzato ma non salvato in cronologia.', 'info');
+    });
+    document.getElementById('prune-confirm')?.addEventListener('click', () => {
+      const ids = Array.from(
+        elements.modalHistoryFullBody.querySelectorAll('input[type="checkbox"]:checked'),
+      ).map((cb) => cb.value);
+      if (ids.length === 0) {
+        showToast('Seleziona almeno un percorso da eliminare.', 'error');
+        return;
+      }
+      routeHistory.removeMany(ids);
+      retryPendingAdd();
+    });
+  }
+
+  function retryPendingAdd() {
+    if (!pendingHistoryEntry) {
+      hideModal(elements.modalHistoryFull);
+      return;
+    }
+    const res = routeHistory.add(pendingHistoryEntry);
+    pendingHistoryEntry = null;
+    hideModal(elements.modalHistoryFull);
+    if (res.added) {
+      showToast('Percorso salvato in cronologia.', 'success');
+    } else {
+      showToast('Impossibile salvare in cronologia.', 'error');
+    }
+  }
+
   function bindEvents() {
     if (elements.profileSelect) {
       elements.profileSelect.addEventListener('change', (e) => setProfile(e.target.value));
@@ -550,6 +792,52 @@ export function init(stateModule, mapApi, services, libs) {
         );
       });
     }
+    if (elements.menuHistory) {
+      elements.menuHistory.addEventListener('click', () => {
+        closeMenu();
+        openHistorySheet();
+      });
+      if (!routeHistory.isStorageAvailable()) {
+        elements.menuHistory.hidden = true;
+      }
+    }
+    if (elements.sheetHistoryClose) {
+      elements.sheetHistoryClose.addEventListener('click', closeHistorySheet);
+    }
+    if (elements.historyList) {
+      elements.historyList.addEventListener('click', handleHistoryListClick);
+      elements.historyList.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          const card = e.target.closest?.('.history-card');
+          if (card) {
+            e.preventDefault();
+            handleHistoryListClick({ target: card, stopPropagation() {} });
+          }
+        }
+      });
+    }
+    if (elements.btnHistoryClear) {
+      elements.btnHistoryClear.addEventListener('click', handleHistoryClear);
+    }
+    if (elements.historyPrefFifo) {
+      elements.historyPrefFifo.addEventListener('change', handleHistoryPrefChange);
+    }
+    if (elements.historyPrefManual) {
+      elements.historyPrefManual.addEventListener('change', handleHistoryPrefChange);
+    }
+    if (elements.modalHistoryFull) {
+      elements.modalHistoryFull.addEventListener('click', (e) => {
+        if (e.target && e.target.matches && e.target.matches('[data-close]')) {
+          pendingHistoryEntry = null;
+          hideModal(elements.modalHistoryFull);
+        }
+      });
+    }
+    routeHistory.subscribe(() => {
+      if (elements.sheetHistory && !elements.sheetHistory.hidden) {
+        renderHistory();
+      }
+    });
     if (elements.menuPopover) {
       elements.menuPopover.addEventListener('click', (e) => e.stopPropagation());
     }
@@ -733,5 +1021,6 @@ export function init(stateModule, mapApi, services, libs) {
     onAnotherLoop(callback) {
       anotherLoopHandler = callback;
     },
+    onHistoryFull,
   };
 }

@@ -160,3 +160,23 @@ export function reorderWaypoints(idsArray) {
   if (reordered.length !== state.waypoints.length) return;
   update({ waypoints: reordered });
 }
+
+export function loadFromHistoryEntry(entry) {
+  if (!entry || !Array.isArray(entry.waypoints)) return;
+  update({
+    waypoints: entry.waypoints.map((w, i) => ({
+      id: w.id || `w${Date.now()}_${i}`,
+      lat: Number(w.lat),
+      lon: Number(w.lon),
+      label: w.label || '',
+      source: w.source || 'history',
+    })),
+    profile: entry.profile || 'safety',
+    targetDistanceEnabled: !!entry.targetDistanceEnabled,
+    targetDistanceKm: Number.isFinite(entry.targetDistanceKm) ? entry.targetDistanceKm : 30,
+    loopSeed: Number.isFinite(entry.loopSeed) ? entry.loopSeed : 0,
+    route: null,
+    status: 'idle',
+    error: null,
+  });
+}

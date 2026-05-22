@@ -1185,3 +1185,206 @@ body[data-result-open="true"] .fab--gps {
   color: var(--c-white);
 }
 .btn--secondary:hover { background: #1d4ed8; }
+
+/* ========================================================
+   Cronologia percorsi
+   ======================================================== */
+
+.sheet--history { z-index: 25; }
+
+.sheet__title-counter {
+  font-size: 0.85em;
+  font-weight: 400;
+  color: var(--c-text-muted, #777);
+  margin-left: 0.5rem;
+}
+
+.history-prefs {
+  border: 1px solid var(--c-border, #e0e0d8);
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  margin: 0 0 1rem 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  background: var(--c-surface-2, #fafaf6);
+}
+
+.history-prefs__legend {
+  padding: 0 0.4rem;
+  font-size: 0.85rem;
+  color: var(--c-text-muted, #777);
+}
+
+.history-prefs__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.history-list[hidden] { display: none; }
+
+.history-card {
+  border: 1px solid var(--c-border, #e0e0d8);
+  border-radius: 10px;
+  padding: 0.75rem 0.85rem;
+  background: var(--c-surface, #fff);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 0.25rem 0.5rem;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.history-card:hover,
+.history-card:focus-within {
+  background: var(--c-surface-2, #fafaf6);
+  border-color: var(--c-primary, #2d5016);
+}
+
+.history-card__label {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--c-text, #222);
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.history-card__meta {
+  font-size: 0.8rem;
+  color: var(--c-text-muted, #777);
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.history-card__actions {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.history-card__action {
+  background: transparent;
+  border: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.history-card__action:hover { background: var(--c-surface-2, #f0f0e8); }
+
+.history-empty {
+  text-align: center;
+  color: var(--c-text-muted, #777);
+  padding: 2rem 1rem;
+  margin: 0;
+}
+
+.history-empty[hidden] { display: none; }
+
+.history-footer {
+  margin-top: 1.25rem;
+  display: flex;
+  justify-content: center;
+}
+
+.btn--danger { color: #b00020; }
+
+/* ========================================================
+   Modale generica
+   ======================================================== */
+
+.modal[hidden] { display: none; }
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.modal__panel {
+  position: relative;
+  background: var(--c-surface, #fff);
+  border-radius: 12px;
+  max-width: 480px;
+  width: 100%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+}
+
+.modal__header { padding: 1rem 1.25rem 0.5rem; }
+
+.modal__title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.modal__body {
+  padding: 0.75rem 1.25rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal__body p { margin: 0 0 0.75rem 0; }
+
+.modal__footer {
+  padding: 0.75rem 1.25rem 1rem;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.modal__choice-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.modal__choice-list label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.modal__choice-list label:hover { background: var(--c-surface-2, #fafaf6); }

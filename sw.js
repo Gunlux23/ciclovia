@@ -5,7 +5,7 @@
    - ciclovia-routes-v1  : cache-first, max 10 LRU
    ========================================================= */
 
-const SHELL_CACHE  = 'ciclovia-shell-v4';
+const SHELL_CACHE  = 'ciclovia-shell-v5';
 const TILES_CACHE  = 'ciclovia-tiles-v1';
 const ROUTES_CACHE = 'ciclovia-routes-v1';
 
@@ -31,6 +31,7 @@ const SHELL_ASSETS = [
   /* services */
   './js/services/brouter.js',
   './js/services/routePlanner.js',
+  './js/services/routeHistory.js',
   './js/services/nominatim.js',
   './js/services/geolocation.js',
   './js/services/overpass.js',
