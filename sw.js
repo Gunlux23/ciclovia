@@ -5,7 +5,7 @@
    - ciclovia-routes-v1  : cache-first, max 10 LRU
    ========================================================= */
 
-const SHELL_CACHE  = 'ciclovia-shell-v8';
+const SHELL_CACHE  = 'ciclovia-shell-v9';
 const TILES_CACHE  = 'ciclovia-tiles-v1';
 const ROUTES_CACHE = 'ciclovia-routes-v1';
 
@@ -139,7 +139,9 @@ self.addEventListener('install', (event) => {
           }
         })
       );
-      // self.skipWaiting(); // disabilitato: nuovo SW si attiva al prossimo avvio
+      // skipWaiting: nuovo SW prende subito il controllo al primo refresh
+      // (senza, l'utente deve ricaricare 2 volte per vedere i nuovi asset).
+      self.skipWaiting();
     })()
   );
 });
