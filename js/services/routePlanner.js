@@ -19,25 +19,18 @@
 
 import * as brouter from './brouter.js';
 
-const TOLERANCE = 0.20;       // ±20% sul target (richiesta utente: meglio allungare/
-                              // accorciare 20% che includere strade trafficate)
+const TOLERANCE = 0.10;       // ±10% sul target
 const MAX_ITERATIONS = 5;     // tetto iterazioni per anello / estensione
 const EARTH_R = 6371000;      // raggio terrestre medio in metri
 
 // Anello: parametri per evitare sovrapposizioni andata/ritorno.
 const OVERLAP_THRESHOLD = 0.04;       // 4% di celle visitate >1 volta = accettabile
 const OVERLAP_THRESHOLD_M = 300;      // soglia ASSOLUTA: max 300m di tratto comune
+                                      // (la % da sola scala male su giri lunghi: 1km
+                                      // di A/R su 100km è solo 1% ma resta fastidioso)
 const OVERLAP_ROTATION_RAD = Math.PI / 4;  // 45° per ogni nuovo tentativo
 const OVERLAP_MAX_ATTEMPTS = 5;       // 5 rotazioni → copre fino a 180° con step 45°
 const OVERLAP_CELL_M = 15;            // ~15 m per cella di discretizzazione
-
-// Strade trafficate: due livelli, con priorità assoluta utente.
-//   - "busy_high" = highway=primary OR trunk → DIVIETO QUASI ASSOLUTO.
-//     Tollerato solo se non esiste ALCUNA alternativa (ultimissimo fallback).
-//   - "busy"      = highway=secondary       → da evitare, tollerato fino a soglia.
-// Le strade con bicycle=designated non contano (sono ciclabili dedicate).
-const BUSY_HIGH_THRESHOLD_M = 50;     // primary/trunk: max 50m totali
-const BUSY_THRESHOLD_M = 300;         // secondary: max 300m totali
 
 function toRad(deg) {
   return (deg * Math.PI) / 180;
@@ -111,142 +104,116 @@ function bearingRad(lat1, lon1, lat2, lon2) {
 // non vengono erroneamente contate come overlap.
 //
 // 1°/(60 nautical miles) ≈ 0.000135° ≈ 15m. Usiamo 7400 = 1/0.000135.
-// Classificazione fine del livello di traffico di una way OSM:
-//   'busy_high' = highway primary OR trunk (no bicycle=designated)
-//   'busy'      = highway secondary       (no bicycle=designated)
-//   'safe'      = tutto il resto (incluse tertiary, residential, cycleway, ecc.)
-function classifyBusyLevel(wayTagsStr) {
-  const tags = Object.create(null);
-  for (const part of (wayTagsStr || '').split(/\s+/)) {
-    const i = part.indexOf('=');
-    if (i > 0) tags[part.slice(0, i)] = part.slice(i + 1);
-  }
-  const highway = (tags.highway || '').toLowerCase();
-  const bicycle = (tags.bicycle || '').toLowerCase();
-  if (bicycle === 'designated') return 'safe';
-  if (highway === 'primary' || highway === 'trunk') return 'busy_high';
-  if (highway === 'secondary') return 'busy';
-  return 'safe';
-}
-
-// Misura metri di percorso su strade trafficate, separati per livello.
-// Ritorna { busy: m, busyHigh: m } in metri.
-function measureBusyMeters(geojson, messages) {
-  const out = { busy: 0, busyHigh: 0 };
-  if (!Array.isArray(messages) || messages.length < 3) return out;
-  const header = messages[0];
-  if (!Array.isArray(header)) return out;
-  const lonIdx = header.indexOf('Longitude');
-  const latIdx = header.indexOf('Latitude');
-  const wayIdx = header.indexOf('WayTags');
-  if (lonIdx < 0 || latIdx < 0 || wayIdx < 0) return out;
-
-  let prev = null;
-  for (let r = 1; r < messages.length; r++) {
-    const row = messages[r];
-    if (!Array.isArray(row)) continue;
-    const lon = parseInt(row[lonIdx], 10) / 1e6;
-    const lat = parseInt(row[latIdx], 10) / 1e6;
-    if (!Number.isFinite(lon) || !Number.isFinite(lat)) { prev = null; continue; }
-    const level = classifyBusyLevel(String(row[wayIdx] || ''));
-    if (prev) {
-      const dist = haversineM(prev, { lat, lon });
-      if (level === 'busy_high') out.busyHigh += dist;
-      else if (level === 'busy') out.busy += dist;
-    }
-    prev = { lat, lon };
-  }
-  return out;
-}
-
 function measureOverlap(geojson) {
   const coords = (geojson && geojson.coordinates) || [];
-  if (coords.length < 2) return { pct: 0, meters: 0, overlapCoords: [] };
-  // Mappa: cellKey → { count, lat, lon } (memorizza un sample per cella)
+  if (coords.length < 2) return { pct: 0, meters: 0 };
   const cells = new Map();
   const scale = 1000 * (60 / OVERLAP_CELL_M);  // ≈ 4000 per OVERLAP_CELL_M=15
   for (const [lon, lat] of coords) {
     const key = `${Math.round(lat * scale)},${Math.round(lon * scale)}`;
-    const c = cells.get(key);
-    if (c) c.count++;
-    else cells.set(key, { count: 1, lat, lon });
+    cells.set(key, (cells.get(key) || 0) + 1);
   }
   let overlapping = 0;
-  const overlapCoords = [];
-  for (const cell of cells.values()) {
-    if (cell.count > 1) {
-      overlapping++;
-      overlapCoords.push({ lat: cell.lat, lon: cell.lon });
-    }
-  }
+  for (const c of cells.values()) if (c > 1) overlapping++;
   return {
     pct: cells.size > 0 ? overlapping / cells.size : 0,
     meters: overlapping * OVERLAP_CELL_M,
-    overlapCoords,
   };
 }
 
-// Clustering "grow-from-seed" delle coordinate sovrapposte → punti nogo.
-// Due coordinate appartengono allo stesso cluster se distano ≤ NOGO_CLUSTER_M.
-// Per ogni cluster ritorna {lat, lon} = centroide, raggio = estensione/2 + buffer.
-const NOGO_CLUSTER_M = 80;        // distanza max per stessa zona
-const NOGO_MIN_RADIUS_M = 50;     // raggio minimo del nogo
-const NOGO_MAX_RADIUS_M = 200;    // raggio massimo (evita di bloccare zone enormi)
-const NOGO_BUFFER_M = 30;         // margine attorno al cluster
-const NOGO_MAX_COUNT = 6;         // massimo numero di nogo (URL BRouter lunga)
-const NOGO_MIN_SIZE = 3;          // ignora cluster di poche celle (rumore)
+// Parametri di "trim" delle appendici A/R nell'anello.
+// Dopo il calcolo, se il percorso contiene tratti che ripassano sulla stessa
+// strada, vengono tagliati direttamente dal geojson (senza ricalcolare).
+const TRIM_START_BUFFER_M = 200;        // ignora overlap entro 200m dalla partenza/arrivo
+                                        // (è la chiusura naturale del giro, non un'appendice)
+const TRIM_MIN_APPENDIX_LEN_M = 200;    // pathLen tra innesto e ritorno ≥ 200m
+                                        // (corrisponde ad appendice di ≥ 100m solo andata)
+const TRIM_MAX_REMOVED_RATIO = 0.5;     // safety: non rimuovere più del 50% del giro
+                                        // (se sì, è un caso patologico, tieni l'originale)
 
-function haversineM(a, b) {
-  const R = 6371000;
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(b.lat - a.lat);
-  const dLon = toRad(b.lon - a.lon);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const x = Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(x));
-}
+// Rileva e rimuove appendici A/R dal geojson di un loop chiuso.
+// Strategia:
+//   1) Discretizza i punti del percorso in celle ~15m (riusa OVERLAP_CELL_M).
+//   2) Per ogni indice i NON vicino all'origine, cerca il maggior j > i nella
+//      stessa cella che NON è vicino all'origine.
+//   3) Se la distanza percorsa tra i e j (lungo il path) è ≥ TRIM_MIN_APPENDIX_LEN_M,
+//      è un'appendice: la rimuoviamo. Manteniamo coord[i] come snodo (è lo stesso
+//      luogo geografico di coord[j]).
+//   4) Guardia: se la rimozione totale supera il 50% del percorso → annulla
+//      (il giro è probabilmente A/R puro o degenere).
+//
+// Ritorna { geojson, trimmedMeters }. Se nessuna appendice trovata,
+// trimmedMeters=0 e geojson è quello originale.
+function trimLoopAppendices(geojson, origin) {
+  const coords = (geojson && geojson.coordinates) || [];
+  if (coords.length < 10) return { geojson, trimmedMeters: 0 };
 
-function buildNogosFromOverlap(overlapCoords) {
-  if (!overlapCoords || overlapCoords.length < NOGO_MIN_SIZE) return [];
-  const used = new Array(overlapCoords.length).fill(false);
-  const clusters = [];
-
-  for (let i = 0; i < overlapCoords.length; i++) {
-    if (used[i]) continue;
-    const cluster = [overlapCoords[i]];
-    used[i] = true;
-    // Espandi cluster: ogni nuovo punto può attirarne altri (grow)
-    for (let g = 0; g < cluster.length; g++) {
-      for (let j = i + 1; j < overlapCoords.length; j++) {
-        if (used[j]) continue;
-        if (haversineM(cluster[g], overlapCoords[j]) <= NOGO_CLUSTER_M) {
-          cluster.push(overlapCoords[j]);
-          used[j] = true;
-        }
-      }
+  // Marca punti vicini all'origine (chiusura del giro, NON tagliare lì).
+  const nearOrigin = new Array(coords.length).fill(false);
+  for (let i = 0; i < coords.length; i++) {
+    const [lon, lat] = coords[i];
+    if (haversineMeters(lat, lon, origin.lat, origin.lon) <= TRIM_START_BUFFER_M) {
+      nearOrigin[i] = true;
     }
-    if (cluster.length >= NOGO_MIN_SIZE) clusters.push(cluster);
   }
 
-  // Per ogni cluster: centroide + raggio basato sull'estensione
-  const nogos = clusters.map((cluster) => {
-    const lat = cluster.reduce((s, c) => s + c.lat, 0) / cluster.length;
-    const lon = cluster.reduce((s, c) => s + c.lon, 0) / cluster.length;
-    const center = { lat, lon };
-    let maxDist = 0;
-    for (const p of cluster) maxDist = Math.max(maxDist, haversineM(center, p));
-    const radiusM = Math.min(
-      NOGO_MAX_RADIUS_M,
-      Math.max(NOGO_MIN_RADIUS_M, maxDist + NOGO_BUFFER_M),
-    );
-    return { lat, lon, radiusM, size: cluster.length };
-  });
+  // Cell → array di indici nei coords.
+  const scale = 1000 * (60 / OVERLAP_CELL_M);
+  const cellMap = new Map();
+  for (let i = 0; i < coords.length; i++) {
+    const [lon, lat] = coords[i];
+    const key = `${Math.round(lat * scale)},${Math.round(lon * scale)}`;
+    if (!cellMap.has(key)) cellMap.set(key, []);
+    cellMap.get(key).push(i);
+  }
 
-  // Tieni solo i cluster più grandi (limita URL BRouter)
-  nogos.sort((a, b) => b.size - a.size);
-  return nogos.slice(0, NOGO_MAX_COUNT).map(({ lat, lon, radiusM }) => ({ lat, lon, radiusM }));
+  const toRemove = new Array(coords.length).fill(false);
+  const totalLenM = geojsonLengthKm(geojson) * 1000;
+
+  let i = 0;
+  while (i < coords.length - 1) {
+    if (nearOrigin[i] || toRemove[i]) { i++; continue; }
+
+    const [lon, lat] = coords[i];
+    const key = `${Math.round(lat * scale)},${Math.round(lon * scale)}`;
+    const same = cellMap.get(key) || [];
+
+    // Trova il maggior j > i nella stessa cella, valido (non near-origin, non già marcato).
+    let j = -1;
+    for (let k = same.length - 1; k >= 0; k--) {
+      const idx = same[k];
+      if (idx > i && !nearOrigin[idx] && !toRemove[idx]) { j = idx; break; }
+    }
+
+    if (j > i + 3) {
+      // Lunghezza tra i e j (tutto il "ramo" andata+ritorno).
+      let pathLen = 0;
+      for (let k = i; k < j; k++) {
+        pathLen += haversineMeters(coords[k][1], coords[k][0], coords[k+1][1], coords[k+1][0]);
+      }
+      // Guardia: appendici troppo grosse vs il giro totale = caso patologico, skip.
+      if (pathLen >= TRIM_MIN_APPENDIX_LEN_M && pathLen <= totalLenM * 0.5) {
+        // Rimuovi coord[i+1 ... j] (j incluso: rappresenta il rientro nel
+        // medesimo punto di coord[i], che resta come snodo).
+        for (let k = i + 1; k <= j; k++) toRemove[k] = true;
+        i = j + 1;
+        continue;
+      }
+    }
+    i++;
+  }
+
+  const newCoords = coords.filter((_, idx) => !toRemove[idx]);
+  // Safety finale: se ho tolto troppo, annulla l'operazione.
+  if (newCoords.length < coords.length * (1 - TRIM_MAX_REMOVED_RATIO)) {
+    return { geojson, trimmedMeters: 0 };
+  }
+  if (newCoords.length === coords.length) {
+    return { geojson, trimmedMeters: 0 };
+  }
+  const newGeojson = { ...geojson, coordinates: newCoords };
+  const trimmedMeters = totalLenM - geojsonLengthKm(newGeojson) * 1000;
+  return { geojson: newGeojson, trimmedMeters };
 }
 
 // Un tentativo è considerato "pulito" se sia % sia metri assoluti sono sotto soglia.
@@ -255,32 +222,6 @@ function buildNogosFromOverlap(overlapCoords) {
 //   - solo m → fallisce su giri corti (200m su 5km è il 4% del giro)
 function isOverlapAcceptable(overlap) {
   return overlap.pct <= OVERLAP_THRESHOLD && overlap.meters <= OVERLAP_THRESHOLD_M;
-}
-
-// Un tentativo è "accettabile" se rispetta TUTTI i criteri:
-//   - busyHighMeters ≈ 0 (primary/trunk vietate, salvo ultima risorsa)
-//   - busyMeters sotto soglia (secondary tollerata fino a 300m)
-//   - overlap pct/meters sotto soglie
-function isRouteAcceptable(attempt) {
-  return attempt.busyHighMeters <= BUSY_HIGH_THRESHOLD_M
-    && attempt.busyMeters <= BUSY_THRESHOLD_M
-    && isOverlapAcceptable(attempt.overlap);
-}
-
-// Confronto tra tentativi: ritorna < 0 se `a` è migliore di `b`.
-// Priorità (in ordine di rilevanza, ognuna lessicografica):
-//   1) busyHighMeters    — primary/trunk: priorità ASSOLUTA, zero meglio
-//   2) busyMeters        — secondary:     da minimizzare
-//   3) overlap.meters    — meno A/R meglio
-//   4) distanza dal target (se in argomento)
-function compareAttempts(a, b, targetKm) {
-  if (a.busyHighMeters !== b.busyHighMeters) return a.busyHighMeters - b.busyHighMeters;
-  if (a.busyMeters !== b.busyMeters) return a.busyMeters - b.busyMeters;
-  if (a.overlap.meters !== b.overlap.meters) return a.overlap.meters - b.overlap.meters;
-  if (Number.isFinite(targetKm)) {
-    return Math.abs(a.km - targetKm) - Math.abs(b.km - targetKm);
-  }
-  return 0;
 }
 
 // Errore astratto per quando un'iterazione viene cancellata dall'utente.
@@ -298,56 +239,23 @@ function checkAbort(signal) {
 // Calcola un tentativo di anello con QUADRILATERO: 3 waypoint a θ, θ+90°, θ+180°
 // distribuiti su un semicerchio (forma "a ferro di cavallo"). Più strade
 // differenti rispetto al triangolo precedente → minor probabilità di overlap.
-async function tryLoopQuadrilateral({ origin, profile, R, θ, signal, nogos, skipMids }) {
+async function tryLoopQuadrilateral({ origin, profile, R, θ, signal }) {
   const a = destinationPoint(origin.lat, origin.lon, R, θ);
   const b = destinationPoint(origin.lat, origin.lon, R, θ + Math.PI / 2);
   const c = destinationPoint(origin.lat, origin.lon, R, θ + Math.PI);
-  const full = [
+  const waypoints = [
     { lat: origin.lat, lon: origin.lon },
     a, b, c,
     { lat: origin.lat, lon: origin.lon },
   ];
-  const skipSet = new Set(Array.isArray(skipMids) ? skipMids : []);
-  const waypoints = full.filter((_, i) => !skipSet.has(i));
-  const resp = await brouter.fetchRoute(waypoints, profile, { nogos });
+  const resp = await brouter.fetchRoute(waypoints, profile);
   checkAbort(signal);
-  const busy = measureBusyMeters(resp.geojson, resp.messages);
   return {
     resp,
     km: geojsonLengthKm(resp.geojson),
-    overlap: measureOverlap(resp.geojson),
-    busyMeters: busy.busy,         // metri su secondary (no bike)
-    busyHighMeters: busy.busyHigh, // metri su primary/trunk (no bike) — DIVIETO
+    overlap: measureOverlap(resp.geojson),  // { pct, meters }
     waypoints,
-    midPoints: { a, b, c },
   };
-}
-
-// Identifica tutti i waypoint intermedi (a, b, c) che cadono "dentro" un
-// cluster di overlap: cioè a meno di `thresholdM` da almeno un centroide.
-// Sono i candidati alla potatura. Ritorna gli indici (sottinsieme di [1,2,3]).
-//
-// IMPORTANTE: non lasciamo mai meno di 1 waypoint intermedio (altrimenti il
-// loop degenera in A/R puro). Quindi se ne troviamo 3 colpevoli, ne togliamo
-// al massimo 2.
-function findWaypointsInsideOverlap(midPoints, overlapCoords, thresholdM = 250) {
-  if (!midPoints || !overlapCoords?.length) return [];
-  const points = [
-    { idx: 1, p: midPoints.a },
-    { idx: 2, p: midPoints.b },
-    { idx: 3, p: midPoints.c },
-  ];
-  const culprits = [];
-  for (const { idx, p } of points) {
-    let minDist = Infinity;
-    for (const o of overlapCoords) {
-      const d = haversineM(p, o);
-      if (d < minDist) minDist = d;
-    }
-    if (minDist <= thresholdM) culprits.push({ idx, dist: minDist });
-  }
-  culprits.sort((a, b) => a.dist - b.dist);
-  return culprits.slice(0, 2).map((c) => c.idx);
 }
 
 /**
@@ -387,16 +295,13 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
       });
     }
 
-    // Cerca il miglior tentativo a questo raggio variando θ.
-    // Ranking (compareAttempts):
-    //   1) busyHighMeters (primary/trunk, DIVIETO ASSOLUTO)
-    //   2) busyMeters     (secondary, da minimizzare)
-    //   3) overlap.meters
-    //   4) distanza target
+    // Cerca il miglior tentativo a questo raggio variando θ se l'overlap è alto.
+    // "Miglior" = minor numero di metri sovrapposti (più rappresentativo della %
+    // su giri di lunghezze diverse).
     let attemptBest = null;
+    let attemptBestMeters = Infinity;
     let lastKm = null;
     let attemptErr = null;
-    let attemptBestθ = θBase;
 
     for (let rot = 0; rot < OVERLAP_MAX_ATTEMPTS; rot++) {
       const θ = θBase + rot * OVERLAP_ROTATION_RAD;
@@ -404,13 +309,12 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
         const t = await tryLoopQuadrilateral({ origin, profile, R, θ, signal });
         lastKm = t.km;
 
-        if (attemptBest === null || compareAttempts(t, attemptBest, targetKm) < 0) {
+        if (t.overlap.meters < attemptBestMeters) {
           attemptBest = t;
-          attemptBestθ = θ;
+          attemptBestMeters = t.overlap.meters;
         }
-        // Esci dalle rotazioni se il tentativo soddisfa TUTTI i criteri
-        // (overlap OK + busy OK)
-        if (isRouteAcceptable(t)) break;
+
+        if (isOverlapAcceptable(t.overlap)) break;
       } catch (err) {
         if (err.name === 'PlanAbortError') throw err;
         attemptErr = err;
@@ -424,88 +328,34 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
       continue;
     }
 
-    // RECUPERO — il tentativo migliore ha ancora problemi (overlap o busy).
-    // Priorità utente ASSOLUTA: evitare strade trafficate. Quindi se busy>0:
-    //   - prova prima POTATURA dei waypoint vicini all'overlap/al busy
-    //   - accetta un retry solo se NON aumenta i metri trafficati
-    if (!isRouteAcceptable(attemptBest)) {
-
-      // LIVELLO 1 — POTATURA: rimuovi waypoint colpevoli (vicini ai cluster
-      // overlap). Se busy>0, il waypoint colpevole sta probabilmente in una
-      // zona raggiungibile solo da strade trafficate → rimuoverlo elimina sia
-      // l'A/R sia i metri trafficati di quella tratta.
-      const culprits = findWaypointsInsideOverlap(
-        attemptBest.midPoints,
-        attemptBest.overlap.overlapCoords || [],
-      );
-      if (culprits.length > 0) {
-        const combos = [];
-        if (culprits.length >= 2) combos.push(culprits.slice(0, 2));
-        for (const c of culprits) combos.push([c]);
-
-        for (const skipMids of combos) {
-          try {
-            const tPrune = await tryLoopQuadrilateral({
-              origin, profile, R, θ: attemptBestθ, signal, skipMids,
-            });
-            // Accetta SOLO se è strettamente meglio per i nostri criteri
-            // (compareAttempts: prima busy, poi overlap).
-            if (compareAttempts(tPrune, attemptBest, targetKm) < 0) {
-              attemptBest = tPrune;
-              if (isRouteAcceptable(tPrune)) break;
-            }
-          } catch (err) {
-            if (err.name === 'PlanAbortError') throw err;
-          }
-        }
-      }
-
-      // LIVELLO 2 — NOGOS: se la potatura non ha aiutato (o non era applicabile),
-      // costruisci zone vietate dalle celle sovrapposte e ritenta sullo stesso θ.
-      if (!isOverlapAcceptable(attemptBest.overlap) && attemptBest.overlap.overlapCoords?.length) {
-        const nogos = buildNogosFromOverlap(attemptBest.overlap.overlapCoords);
-        if (nogos.length > 0) {
-          try {
-            const tNogo = await tryLoopQuadrilateral({
-              origin, profile, R, θ: attemptBestθ, signal, nogos,
-            });
-            const overlapImproved = (attemptBest.overlap.meters - tNogo.overlap.meters) >= 200;
-            // Per i nogos: accetta SOLO se compareAttempts dice strettamente meglio
-            // (cioè: meno busy, oppure stesso busy ma meno overlap). Questa è una
-            // protezione contro le scorciatoie su strade trafficate.
-            if (compareAttempts(tNogo, attemptBest, targetKm) < 0) {
-              attemptBest = tNogo;
-            }
-          } catch (err) {
-            if (err.name === 'PlanAbortError') throw err;
-          }
-        }
-      }
-    }
-
     const km = attemptBest.km;
     const delta = Math.abs(km - targetKm);
 
-    // Memorizza miglior tentativo globale.
-    // Priorità: prima evitamento trafficate, poi overlap, poi vicinanza al target.
-    if (best === null || compareAttempts(attemptBest, best, targetKm) < 0) {
+    // Memorizza miglior tentativo globale (priorità: distanza, poi overlap).
+    if (delta < bestDelta) {
       best = { ...attemptBest, delta };
       bestDelta = delta;
     }
 
-    // Se il tentativo è pulito (no busy + no overlap) e in tolleranza km → ritorna.
-    // Se è in tolleranza km MA ha problemi (busy/overlap), ritorna con warning
-    // SOLO se non possiamo fare meglio col prossimo R.
-    if (km >= targetKm * (1 - TOLERANCE) && km <= targetKm * (1 + TOLERANCE)
-        && isRouteAcceptable(attemptBest)) {
+    // In tolleranza? ritorna subito (eventualmente con appendici tagliate).
+    if (km >= targetKm * (1 - TOLERANCE) && km <= targetKm * (1 + TOLERANCE)) {
+      const trimResult = trimLoopAppendices(attemptBest.resp.geojson, origin);
+      const finalKm = trimResult.trimmedMeters > 0
+        ? geojsonLengthKm(trimResult.geojson)
+        : km;
+      const note = trimResult.trimmedMeters > 0
+        ? `Rimosse appendici A/R per ~${Math.round(trimResult.trimmedMeters)}m.`
+        : (isOverlapAcceptable(attemptBest.overlap)
+            ? null
+            : `Anello con ~${Math.round(attemptBest.overlap.meters)}m di tratto comune (rete stradale limitata in zona).`);
       return {
-        geojson: attemptBest.resp.geojson,
+        geojson: trimResult.geojson,
         messages: attemptBest.resp.messages,
         properties: attemptBest.resp.properties,
         mode: 'loop',
         iterations: i + 1,
-        finalKm: km,
-        warning: null,
+        finalKm,
+        warning: note,
       };
     }
 
@@ -515,28 +365,27 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
     θBase += 0.05;
   }
 
-  // Esaurite iterazioni distanza: ritorna miglior tentativo globale.
+  // Esaurite iterazioni distanza: ritorna miglior tentativo globale,
+  // eventualmente con appendici tagliate.
   if (best) {
-    const parts = [];
-    if (Math.abs(best.km - targetKm) > targetKm * TOLERANCE) {
-      parts.push(`Distanza approssimativa: ${best.km.toFixed(1)} km (target ${targetKm} km)`);
-    }
-    if (best.busyHighMeters > BUSY_HIGH_THRESHOLD_M) {
-      parts.push(`~${Math.round(best.busyHighMeters)}m su strade ad alto traffico (rete stradale molto limitata in zona)`);
-    } else if (best.busyMeters > BUSY_THRESHOLD_M) {
-      parts.push(`~${Math.round(best.busyMeters)}m su strade trafficate`);
-    }
-    if (!isOverlapAcceptable(best.overlap)) {
-      parts.push(`~${Math.round(best.overlap.meters)}m di tratto comune`);
+    const trimResult = trimLoopAppendices(best.resp.geojson, origin);
+    const finalKm = trimResult.trimmedMeters > 0
+      ? geojsonLengthKm(trimResult.geojson)
+      : best.km;
+    const parts = [`Distanza approssimativa: ${finalKm.toFixed(1)} km (target ${targetKm} km)`];
+    if (trimResult.trimmedMeters > 0) {
+      parts.push(`Rimosse appendici A/R per ~${Math.round(trimResult.trimmedMeters)}m`);
+    } else if (!isOverlapAcceptable(best.overlap)) {
+      parts.push(`Tratto comune: ~${Math.round(best.overlap.meters)}m`);
     }
     return {
-      geojson: best.resp.geojson,
+      geojson: trimResult.geojson,
       messages: best.resp.messages,
       properties: best.resp.properties,
       mode: 'loop',
       iterations: MAX_ITERATIONS,
-      finalKm: best.km,
-      warning: parts.length > 0 ? parts.join(' • ') : null,
+      finalKm,
+      warning: parts.join('. ') + '.',
     };
   }
 
