@@ -18,9 +18,9 @@
 // oppure throwa (RouteNotFoundError, RouteServiceError, AbortError).
 
 import * as brouter from './brouter.js';
-import { classifySegmentType } from '../lib/stats.js';
 
-const TOLERANCE = 0.10;       // ±10% sul target
+const TOLERANCE = 0.20;       // ±20% sul target (richiesta utente: meglio allungare/
+                              // accorciare 20% che includere strade trafficate)
 const MAX_ITERATIONS = 5;     // tetto iterazioni per anello / estensione
 const EARTH_R = 6371000;      // raggio terrestre medio in metri
 
@@ -31,11 +31,13 @@ const OVERLAP_ROTATION_RAD = Math.PI / 4;  // 45° per ogni nuovo tentativo
 const OVERLAP_MAX_ATTEMPTS = 5;       // 5 rotazioni → copre fino a 180° con step 45°
 const OVERLAP_CELL_M = 15;            // ~15 m per cella di discretizzazione
 
-// Strade trafficate: criterio BLOCCANTE (priorità assoluta utente).
-// Un tentativo con più di BUSY_THRESHOLD_M metri su strade primary/trunk/
-// secondary NON designated-bike viene scartato in favore di alternative,
-// anche se più corte.
-const BUSY_THRESHOLD_M = 200;
+// Strade trafficate: due livelli, con priorità assoluta utente.
+//   - "busy_high" = highway=primary OR trunk → DIVIETO QUASI ASSOLUTO.
+//     Tollerato solo se non esiste ALCUNA alternativa (ultimissimo fallback).
+//   - "busy"      = highway=secondary       → da evitare, tollerato fino a soglia.
+// Le strade con bicycle=designated non contano (sono ciclabili dedicate).
+const BUSY_HIGH_THRESHOLD_M = 50;     // primary/trunk: max 50m totali
+const BUSY_THRESHOLD_M = 300;         // secondary: max 300m totali
 
 function toRad(deg) {
   return (deg * Math.PI) / 180;
@@ -109,20 +111,36 @@ function bearingRad(lat1, lon1, lat2, lon2) {
 // non vengono erroneamente contate come overlap.
 //
 // 1°/(60 nautical miles) ≈ 0.000135° ≈ 15m. Usiamo 7400 = 1/0.000135.
-// Calcola i metri di percorso che cadono su strade classificate "busy"
-// (highway primary/trunk/secondary senza designazione bike, vedi classifySegmentType).
-// Usa i messages BRouter (con WayTags) per identificare le way trafficate e somma
-// le distanze haversine fra le righe consecutive.
+// Classificazione fine del livello di traffico di una way OSM:
+//   'busy_high' = highway primary OR trunk (no bicycle=designated)
+//   'busy'      = highway secondary       (no bicycle=designated)
+//   'safe'      = tutto il resto (incluse tertiary, residential, cycleway, ecc.)
+function classifyBusyLevel(wayTagsStr) {
+  const tags = Object.create(null);
+  for (const part of (wayTagsStr || '').split(/\s+/)) {
+    const i = part.indexOf('=');
+    if (i > 0) tags[part.slice(0, i)] = part.slice(i + 1);
+  }
+  const highway = (tags.highway || '').toLowerCase();
+  const bicycle = (tags.bicycle || '').toLowerCase();
+  if (bicycle === 'designated') return 'safe';
+  if (highway === 'primary' || highway === 'trunk') return 'busy_high';
+  if (highway === 'secondary') return 'busy';
+  return 'safe';
+}
+
+// Misura metri di percorso su strade trafficate, separati per livello.
+// Ritorna { busy: m, busyHigh: m } in metri.
 function measureBusyMeters(geojson, messages) {
-  if (!Array.isArray(messages) || messages.length < 3) return 0;
+  const out = { busy: 0, busyHigh: 0 };
+  if (!Array.isArray(messages) || messages.length < 3) return out;
   const header = messages[0];
-  if (!Array.isArray(header)) return 0;
+  if (!Array.isArray(header)) return out;
   const lonIdx = header.indexOf('Longitude');
   const latIdx = header.indexOf('Latitude');
   const wayIdx = header.indexOf('WayTags');
-  if (lonIdx < 0 || latIdx < 0 || wayIdx < 0) return 0;
+  if (lonIdx < 0 || latIdx < 0 || wayIdx < 0) return out;
 
-  let busy = 0;
   let prev = null;
   for (let r = 1; r < messages.length; r++) {
     const row = messages[r];
@@ -130,13 +148,15 @@ function measureBusyMeters(geojson, messages) {
     const lon = parseInt(row[lonIdx], 10) / 1e6;
     const lat = parseInt(row[latIdx], 10) / 1e6;
     if (!Number.isFinite(lon) || !Number.isFinite(lat)) { prev = null; continue; }
-    const type = classifySegmentType(String(row[wayIdx] || ''));
-    if (prev && type === 'busy') {
-      busy += haversineM(prev, { lat, lon });
+    const level = classifyBusyLevel(String(row[wayIdx] || ''));
+    if (prev) {
+      const dist = haversineM(prev, { lat, lon });
+      if (level === 'busy_high') out.busyHigh += dist;
+      else if (level === 'busy') out.busy += dist;
     }
     prev = { lat, lon };
   }
-  return busy;
+  return out;
 }
 
 function measureOverlap(geojson) {
@@ -238,25 +258,27 @@ function isOverlapAcceptable(overlap) {
 }
 
 // Un tentativo è "accettabile" se rispetta TUTTI i criteri:
+//   - busyHighMeters ≈ 0 (primary/trunk vietate, salvo ultima risorsa)
+//   - busyMeters sotto soglia (secondary tollerata fino a 300m)
 //   - overlap pct/meters sotto soglie
-//   - busyMeters sotto soglia (priorità ASSOLUTA utente: niente strade trafficate)
 function isRouteAcceptable(attempt) {
-  return isOverlapAcceptable(attempt.overlap) && attempt.busyMeters <= BUSY_THRESHOLD_M;
+  return attempt.busyHighMeters <= BUSY_HIGH_THRESHOLD_M
+    && attempt.busyMeters <= BUSY_THRESHOLD_M
+    && isOverlapAcceptable(attempt.overlap);
 }
 
 // Confronto tra tentativi: ritorna < 0 se `a` è migliore di `b`.
-// Priorità: prima busy (assoluta), poi overlap, poi distanza dal target.
-// targetKm è opzionale (per il fallback ordering globale).
+// Priorità (in ordine di rilevanza, ognuna lessicografica):
+//   1) busyHighMeters    — primary/trunk: priorità ASSOLUTA, zero meglio
+//   2) busyMeters        — secondary:     da minimizzare
+//   3) overlap.meters    — meno A/R meglio
+//   4) distanza dal target (se in argomento)
 function compareAttempts(a, b, targetKm) {
-  // 1) busy: zero è meglio
+  if (a.busyHighMeters !== b.busyHighMeters) return a.busyHighMeters - b.busyHighMeters;
   if (a.busyMeters !== b.busyMeters) return a.busyMeters - b.busyMeters;
-  // 2) overlap meters
   if (a.overlap.meters !== b.overlap.meters) return a.overlap.meters - b.overlap.meters;
-  // 3) distanza dal target (solo se rilevante)
   if (Number.isFinite(targetKm)) {
-    const da = Math.abs(a.km - targetKm);
-    const db = Math.abs(b.km - targetKm);
-    return da - db;
+    return Math.abs(a.km - targetKm) - Math.abs(b.km - targetKm);
   }
   return 0;
 }
@@ -289,11 +311,13 @@ async function tryLoopQuadrilateral({ origin, profile, R, θ, signal, nogos, ski
   const waypoints = full.filter((_, i) => !skipSet.has(i));
   const resp = await brouter.fetchRoute(waypoints, profile, { nogos });
   checkAbort(signal);
+  const busy = measureBusyMeters(resp.geojson, resp.messages);
   return {
     resp,
     km: geojsonLengthKm(resp.geojson),
     overlap: measureOverlap(resp.geojson),
-    busyMeters: measureBusyMeters(resp.geojson, resp.messages),
+    busyMeters: busy.busy,         // metri su secondary (no bike)
+    busyHighMeters: busy.busyHigh, // metri su primary/trunk (no bike) — DIVIETO
     waypoints,
     midPoints: { a, b, c },
   };
@@ -364,8 +388,11 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
     }
 
     // Cerca il miglior tentativo a questo raggio variando θ.
-    // Ranking (compareAttempts): prima busyMeters (priorità assoluta utente),
-    // poi overlap, poi distanza dal target.
+    // Ranking (compareAttempts):
+    //   1) busyHighMeters (primary/trunk, DIVIETO ASSOLUTO)
+    //   2) busyMeters     (secondary, da minimizzare)
+    //   3) overlap.meters
+    //   4) distanza target
     let attemptBest = null;
     let lastKm = null;
     let attemptErr = null;
@@ -494,8 +521,10 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
     if (Math.abs(best.km - targetKm) > targetKm * TOLERANCE) {
       parts.push(`Distanza approssimativa: ${best.km.toFixed(1)} km (target ${targetKm} km)`);
     }
-    if (best.busyMeters > BUSY_THRESHOLD_M) {
-      parts.push(`~${Math.round(best.busyMeters)}m su strade trafficate (rete stradale limitata)`);
+    if (best.busyHighMeters > BUSY_HIGH_THRESHOLD_M) {
+      parts.push(`~${Math.round(best.busyHighMeters)}m su strade ad alto traffico (rete stradale molto limitata in zona)`);
+    } else if (best.busyMeters > BUSY_THRESHOLD_M) {
+      parts.push(`~${Math.round(best.busyMeters)}m su strade trafficate`);
     }
     if (!isOverlapAcceptable(best.overlap)) {
       parts.push(`~${Math.round(best.overlap.meters)}m di tratto comune`);
