@@ -5,7 +5,7 @@
    - ciclovia-routes-v1  : cache-first, max 10 LRU
    ========================================================= */
 
-const SHELL_CACHE  = 'ciclovia-shell-v12';
+const SHELL_CACHE  = 'ciclovia-shell-v13';
 const TILES_CACHE  = 'ciclovia-tiles-v1';
 const ROUTES_CACHE = 'ciclovia-routes-v1';
 

@@ -18,6 +18,7 @@
 // oppure throwa (RouteNotFoundError, RouteServiceError, AbortError).
 
 import * as brouter from './brouter.js';
+import { classifySegmentType } from '../lib/stats.js';
 
 const TOLERANCE = 0.10;       // ±10% sul target
 const MAX_ITERATIONS = 5;     // tetto iterazioni per anello / estensione
@@ -26,11 +27,15 @@ const EARTH_R = 6371000;      // raggio terrestre medio in metri
 // Anello: parametri per evitare sovrapposizioni andata/ritorno.
 const OVERLAP_THRESHOLD = 0.04;       // 4% di celle visitate >1 volta = accettabile
 const OVERLAP_THRESHOLD_M = 300;      // soglia ASSOLUTA: max 300m di tratto comune
-                                      // (la % da sola scala male su giri lunghi: 1km
-                                      // di A/R su 100km è solo 1% ma resta fastidioso)
 const OVERLAP_ROTATION_RAD = Math.PI / 4;  // 45° per ogni nuovo tentativo
 const OVERLAP_MAX_ATTEMPTS = 5;       // 5 rotazioni → copre fino a 180° con step 45°
 const OVERLAP_CELL_M = 15;            // ~15 m per cella di discretizzazione
+
+// Strade trafficate: criterio BLOCCANTE (priorità assoluta utente).
+// Un tentativo con più di BUSY_THRESHOLD_M metri su strade primary/trunk/
+// secondary NON designated-bike viene scartato in favore di alternative,
+// anche se più corte.
+const BUSY_THRESHOLD_M = 200;
 
 function toRad(deg) {
   return (deg * Math.PI) / 180;
@@ -104,6 +109,36 @@ function bearingRad(lat1, lon1, lat2, lon2) {
 // non vengono erroneamente contate come overlap.
 //
 // 1°/(60 nautical miles) ≈ 0.000135° ≈ 15m. Usiamo 7400 = 1/0.000135.
+// Calcola i metri di percorso che cadono su strade classificate "busy"
+// (highway primary/trunk/secondary senza designazione bike, vedi classifySegmentType).
+// Usa i messages BRouter (con WayTags) per identificare le way trafficate e somma
+// le distanze haversine fra le righe consecutive.
+function measureBusyMeters(geojson, messages) {
+  if (!Array.isArray(messages) || messages.length < 3) return 0;
+  const header = messages[0];
+  if (!Array.isArray(header)) return 0;
+  const lonIdx = header.indexOf('Longitude');
+  const latIdx = header.indexOf('Latitude');
+  const wayIdx = header.indexOf('WayTags');
+  if (lonIdx < 0 || latIdx < 0 || wayIdx < 0) return 0;
+
+  let busy = 0;
+  let prev = null;
+  for (let r = 1; r < messages.length; r++) {
+    const row = messages[r];
+    if (!Array.isArray(row)) continue;
+    const lon = parseInt(row[lonIdx], 10) / 1e6;
+    const lat = parseInt(row[latIdx], 10) / 1e6;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) { prev = null; continue; }
+    const type = classifySegmentType(String(row[wayIdx] || ''));
+    if (prev && type === 'busy') {
+      busy += haversineM(prev, { lat, lon });
+    }
+    prev = { lat, lon };
+  }
+  return busy;
+}
+
 function measureOverlap(geojson) {
   const coords = (geojson && geojson.coordinates) || [];
   if (coords.length < 2) return { pct: 0, meters: 0, overlapCoords: [] };
@@ -202,6 +237,30 @@ function isOverlapAcceptable(overlap) {
   return overlap.pct <= OVERLAP_THRESHOLD && overlap.meters <= OVERLAP_THRESHOLD_M;
 }
 
+// Un tentativo è "accettabile" se rispetta TUTTI i criteri:
+//   - overlap pct/meters sotto soglie
+//   - busyMeters sotto soglia (priorità ASSOLUTA utente: niente strade trafficate)
+function isRouteAcceptable(attempt) {
+  return isOverlapAcceptable(attempt.overlap) && attempt.busyMeters <= BUSY_THRESHOLD_M;
+}
+
+// Confronto tra tentativi: ritorna < 0 se `a` è migliore di `b`.
+// Priorità: prima busy (assoluta), poi overlap, poi distanza dal target.
+// targetKm è opzionale (per il fallback ordering globale).
+function compareAttempts(a, b, targetKm) {
+  // 1) busy: zero è meglio
+  if (a.busyMeters !== b.busyMeters) return a.busyMeters - b.busyMeters;
+  // 2) overlap meters
+  if (a.overlap.meters !== b.overlap.meters) return a.overlap.meters - b.overlap.meters;
+  // 3) distanza dal target (solo se rilevante)
+  if (Number.isFinite(targetKm)) {
+    const da = Math.abs(a.km - targetKm);
+    const db = Math.abs(b.km - targetKm);
+    return da - db;
+  }
+  return 0;
+}
+
 // Errore astratto per quando un'iterazione viene cancellata dall'utente.
 export class PlanAbortError extends Error {
   constructor() {
@@ -218,9 +277,6 @@ function checkAbort(signal) {
 // distribuiti su un semicerchio (forma "a ferro di cavallo"). Più strade
 // differenti rispetto al triangolo precedente → minor probabilità di overlap.
 async function tryLoopQuadrilateral({ origin, profile, R, θ, signal, nogos, skipMids }) {
-  // skipMids: array di indici dei waypoint intermedi da OMETTERE
-  //   1 = a (θ), 2 = b (θ+90°), 3 = c (θ+180°).
-  // Serve a "potare" uno o più vertici quando essi forzano appendici A/R inutili.
   const a = destinationPoint(origin.lat, origin.lon, R, θ);
   const b = destinationPoint(origin.lat, origin.lon, R, θ + Math.PI / 2);
   const c = destinationPoint(origin.lat, origin.lon, R, θ + Math.PI);
@@ -237,6 +293,7 @@ async function tryLoopQuadrilateral({ origin, profile, R, θ, signal, nogos, ski
     resp,
     km: geojsonLengthKm(resp.geojson),
     overlap: measureOverlap(resp.geojson),
+    busyMeters: measureBusyMeters(resp.geojson, resp.messages),
     waypoints,
     midPoints: { a, b, c },
   };
@@ -306,28 +363,27 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
       });
     }
 
-    // Cerca il miglior tentativo a questo raggio variando θ se l'overlap è alto.
-    // "Miglior" = minor numero di metri sovrapposti (più rappresentativo della %
-    // su giri di lunghezze diverse).
+    // Cerca il miglior tentativo a questo raggio variando θ.
+    // Ranking (compareAttempts): prima busyMeters (priorità assoluta utente),
+    // poi overlap, poi distanza dal target.
     let attemptBest = null;
-    let attemptBestMeters = Infinity;
     let lastKm = null;
     let attemptErr = null;
-
     let attemptBestθ = θBase;
+
     for (let rot = 0; rot < OVERLAP_MAX_ATTEMPTS; rot++) {
       const θ = θBase + rot * OVERLAP_ROTATION_RAD;
       try {
         const t = await tryLoopQuadrilateral({ origin, profile, R, θ, signal });
         lastKm = t.km;
 
-        if (t.overlap.meters < attemptBestMeters) {
+        if (attemptBest === null || compareAttempts(t, attemptBest, targetKm) < 0) {
           attemptBest = t;
-          attemptBestMeters = t.overlap.meters;
           attemptBestθ = θ;
         }
-
-        if (isOverlapAcceptable(t.overlap)) break;
+        // Esci dalle rotazioni se il tentativo soddisfa TUTTI i criteri
+        // (overlap OK + busy OK)
+        if (isRouteAcceptable(t)) break;
       } catch (err) {
         if (err.name === 'PlanAbortError') throw err;
         attemptErr = err;
@@ -341,48 +397,35 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
       continue;
     }
 
-    // RECUPERO OVERLAP — strategia a due livelli per eliminare A/R inutili
-    // senza forzare il passaggio su strade trafficate.
-    //
-    // Priorità utente: evitare strade trafficate sopra ogni cosa.
-    // Se BRouter aggira il problema passando da strade trafficate, il percorso
-    // di solito risulta MOLTO PIÙ CORTO (sono più dirette dei raccordi
-    // tranquilli). Useremo questa metrica come segnale "ha barato".
-    if (!isOverlapAcceptable(attemptBest.overlap) && attemptBest.overlap.overlapCoords?.length) {
+    // RECUPERO — il tentativo migliore ha ancora problemi (overlap o busy).
+    // Priorità utente ASSOLUTA: evitare strade trafficate. Quindi se busy>0:
+    //   - prova prima POTATURA dei waypoint vicini all'overlap/al busy
+    //   - accetta un retry solo se NON aumenta i metri trafficati
+    if (!isRouteAcceptable(attemptBest)) {
 
-      // LIVELLO 1 — POTATURA: l'overlap può essere causato da uno o più
-      // waypoint del quadrilatero piazzati in zone "senza uscita" (BRouter
-      // ci va e torna per raggiungerli). Identifico TUTTI i waypoint vicini
-      // a cluster overlap e provo combinazioni di rimozione, scegliendo la
-      // migliore.
+      // LIVELLO 1 — POTATURA: rimuovi waypoint colpevoli (vicini ai cluster
+      // overlap). Se busy>0, il waypoint colpevole sta probabilmente in una
+      // zona raggiungibile solo da strade trafficate → rimuoverlo elimina sia
+      // l'A/R sia i metri trafficati di quella tratta.
       const culprits = findWaypointsInsideOverlap(
         attemptBest.midPoints,
-        attemptBest.overlap.overlapCoords,
+        attemptBest.overlap.overlapCoords || [],
       );
       if (culprits.length > 0) {
-        // Combinazioni da provare, dalla più aggressiva (rimuovi entrambi)
-        // alla più conservativa (rimuovi uno solo).
         const combos = [];
-        if (culprits.length >= 2) combos.push(culprits.slice(0, 2)); // entrambi
-        for (const c of culprits) combos.push([c]);                  // uno solo
+        if (culprits.length >= 2) combos.push(culprits.slice(0, 2));
+        for (const c of culprits) combos.push([c]);
 
         for (const skipMids of combos) {
           try {
             const tPrune = await tryLoopQuadrilateral({
               origin, profile, R, θ: attemptBestθ, signal, skipMids,
             });
-            const overlapImproved = (attemptBest.overlap.meters - tPrune.overlap.meters) >= 200;
-            // Per la potatura accettiamo accorciamenti più ampi:
-            //   -25% se rimuoviamo 1 waypoint
-            //   -40% se ne rimuoviamo 2 (togliere 2 lati su 4 accorcia molto
-            //     e in genere è ancora un giro "decente")
-            const minRatio = skipMids.length >= 2 ? 0.60 : 0.75;
-            const notShortcut = tPrune.km >= attemptBest.km * minRatio;
-            if (overlapImproved && notShortcut) {
+            // Accetta SOLO se è strettamente meglio per i nostri criteri
+            // (compareAttempts: prima busy, poi overlap).
+            if (compareAttempts(tPrune, attemptBest, targetKm) < 0) {
               attemptBest = tPrune;
-              attemptBestMeters = tPrune.overlap.meters;
-              // Se ora va bene, esci dal loop combos
-              if (isOverlapAcceptable(tPrune.overlap)) break;
+              if (isRouteAcceptable(tPrune)) break;
             }
           } catch (err) {
             if (err.name === 'PlanAbortError') throw err;
@@ -400,12 +443,11 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
               origin, profile, R, θ: attemptBestθ, signal, nogos,
             });
             const overlapImproved = (attemptBest.overlap.meters - tNogo.overlap.meters) >= 200;
-            // Per i nogos siamo più severi (-15%) perchè un percorso molto più
-            // corto suggerisce che BRouter ha scelto strade dirette/trafficate.
-            const notShortcut = tNogo.km >= attemptBest.km * 0.85;
-            if (overlapImproved && notShortcut) {
+            // Per i nogos: accetta SOLO se compareAttempts dice strettamente meglio
+            // (cioè: meno busy, oppure stesso busy ma meno overlap). Questa è una
+            // protezione contro le scorciatoie su strade trafficate.
+            if (compareAttempts(tNogo, attemptBest, targetKm) < 0) {
               attemptBest = tNogo;
-              attemptBestMeters = tNogo.overlap.meters;
             }
           } catch (err) {
             if (err.name === 'PlanAbortError') throw err;
@@ -417,15 +459,18 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
     const km = attemptBest.km;
     const delta = Math.abs(km - targetKm);
 
-    // Memorizza miglior tentativo globale (priorità: distanza, poi overlap).
-    if (delta < bestDelta) {
+    // Memorizza miglior tentativo globale.
+    // Priorità: prima evitamento trafficate, poi overlap, poi vicinanza al target.
+    if (best === null || compareAttempts(attemptBest, best, targetKm) < 0) {
       best = { ...attemptBest, delta };
       bestDelta = delta;
     }
 
-    // In tolleranza? ritorna subito (anche se overlap > soglia: useremo warning).
-    if (km >= targetKm * (1 - TOLERANCE) && km <= targetKm * (1 + TOLERANCE)) {
-      const acceptable = isOverlapAcceptable(attemptBest.overlap);
+    // Se il tentativo è pulito (no busy + no overlap) e in tolleranza km → ritorna.
+    // Se è in tolleranza km MA ha problemi (busy/overlap), ritorna con warning
+    // SOLO se non possiamo fare meglio col prossimo R.
+    if (km >= targetKm * (1 - TOLERANCE) && km <= targetKm * (1 + TOLERANCE)
+        && isRouteAcceptable(attemptBest)) {
       return {
         geojson: attemptBest.resp.geojson,
         messages: attemptBest.resp.messages,
@@ -433,9 +478,7 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
         mode: 'loop',
         iterations: i + 1,
         finalKm: km,
-        warning: acceptable
-          ? null
-          : `Anello con ~${Math.round(attemptBest.overlap.meters)}m di tratto comune (rete stradale limitata in zona).`,
+        warning: null,
       };
     }
 
@@ -447,9 +490,16 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
 
   // Esaurite iterazioni distanza: ritorna miglior tentativo globale.
   if (best) {
-    const overlapNote = !isOverlapAcceptable(best.overlap)
-      ? ` Tratto comune: ~${Math.round(best.overlap.meters)}m.`
-      : '';
+    const parts = [];
+    if (Math.abs(best.km - targetKm) > targetKm * TOLERANCE) {
+      parts.push(`Distanza approssimativa: ${best.km.toFixed(1)} km (target ${targetKm} km)`);
+    }
+    if (best.busyMeters > BUSY_THRESHOLD_M) {
+      parts.push(`~${Math.round(best.busyMeters)}m su strade trafficate (rete stradale limitata)`);
+    }
+    if (!isOverlapAcceptable(best.overlap)) {
+      parts.push(`~${Math.round(best.overlap.meters)}m di tratto comune`);
+    }
     return {
       geojson: best.resp.geojson,
       messages: best.resp.messages,
@@ -457,7 +507,7 @@ async function planLoop({ origin, profile, targetKm, loopSeed, onProgress, signa
       mode: 'loop',
       iterations: MAX_ITERATIONS,
       finalKm: best.km,
-      warning: `Distanza approssimativa: ${best.km.toFixed(1)} km (target ${targetKm} km).${overlapNote}`,
+      warning: parts.length > 0 ? parts.join(' • ') : null,
     };
   }
 

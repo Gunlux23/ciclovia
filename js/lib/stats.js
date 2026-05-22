@@ -176,7 +176,7 @@ const GRAVEL_SURFACES = new Set([
   'gravel', 'dirt', 'ground', 'unpaved', 'sand', 'compacted', 'fine_gravel',
 ]);
 
-function classifySegmentType(wayTagsStr) {
+export function classifySegmentType(wayTagsStr) {
   const tags = Object.create(null);
   for (const part of (wayTagsStr || '').split(/\s+/)) {
     const i = part.indexOf('=');
