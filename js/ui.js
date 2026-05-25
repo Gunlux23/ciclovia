@@ -584,24 +584,38 @@ export function init(stateModule, mapApi, services, libs) {
   }
 
   function updateFabStates() {
+    // Un FAB serve come ENTRY POINT alla sheet quando è chiusa. Quando la
+    // sheet è aperta, l'utente ha già grabber/× → il FAB diventa rumore
+    // visivo che galleggia sopra il contenuto. Quindi nascondiamo il FAB
+    // della sheet attualmente aperta.
     const stopsOpen = elements.sheetStops
       && elements.sheetStops.dataset.state !== 'peek'
       && !elements.sheetStops.hidden;
     const resVisible = isResultVisible();
     if (elements.fabStops) {
-      elements.fabStops.classList.toggle('sheet-fab--active', !!stopsOpen);
-      elements.fabStops.setAttribute('aria-pressed', stopsOpen ? 'true' : 'false');
+      elements.fabStops.hidden = !!stopsOpen;
     }
     if (elements.fabResult) {
-      elements.fabResult.classList.toggle('sheet-fab--active', resVisible);
-      elements.fabResult.setAttribute('aria-pressed', resVisible ? 'true' : 'false');
+      // Visibile solo se: c'è un percorso (gestito da syncFabResultVisibility)
+      // E result-sheet è chiuso. Se è aperto, lo nascondiamo.
+      if (!elements.fabResult.dataset.hasRoute) {
+        elements.fabResult.hidden = true;
+      } else {
+        elements.fabResult.hidden = resVisible;
+      }
     }
   }
 
-  // Mostra/nascondi fab-result in base alla presenza di un percorso calcolato.
+  // Marca/disabilita la disponibilità del FAB Percorso in base alla presenza
+  // di un percorso calcolato. Lo stato visibility finale è gestito da
+  // updateFabStates (che considera anche se result-sheet è aperto).
   function syncFabResultVisibility(state) {
     if (!elements.fabResult) return;
-    elements.fabResult.hidden = !state || !state.route;
+    if (state && state.route) {
+      elements.fabResult.dataset.hasRoute = '1';
+    } else {
+      delete elements.fabResult.dataset.hasRoute;
+    }
   }
 
   /* ===== Cronologia percorsi ===== */
