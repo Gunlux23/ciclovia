@@ -156,6 +156,41 @@
   </main>
 
   <!-- =========================================================
+       FAB laterali per toggle pannelli (solo mobile)
+       Sempre visibili, indipendenti dallo stato delle sheet,
+       per evitare il problema della sovrapposizione.
+       ========================================================= -->
+  <div class="sheet-toggles" role="toolbar" aria-label="Pannelli">
+    <button
+      type="button"
+      id="fab-stops"
+      class="sheet-fab sheet-fab--stops"
+      aria-label="Mostra o nascondi pannello Tappe"
+      aria-pressed="false"
+    >
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="none" stroke="currentColor" stroke-width="2"/>
+        <circle cx="12" cy="9" r="2.5" fill="currentColor"/>
+      </svg>
+      <span>Tappe</span>
+    </button>
+    <button
+      type="button"
+      id="fab-result"
+      class="sheet-fab sheet-fab--result"
+      aria-label="Mostra o nascondi pannello Percorso"
+      aria-pressed="false"
+      hidden
+    >
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+        <path d="M3 17l6-6 4 4 8-8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M17 7h4v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>Percorso</span>
+    </button>
+  </div>
+
+  <!-- =========================================================
        Bottom sheet: Tappe (sempre visibile)
        ========================================================= -->
   <section

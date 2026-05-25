@@ -61,6 +61,8 @@ export function init(stateModule, mapApi, services, libs) {
     sheetResult: document.getElementById('result-sheet'),
     sheetResultHandle: document.getElementById('sheet-result-handle'),
     sheetResultClose: document.getElementById('sheet-result-close'),
+    fabStops: document.getElementById('fab-stops'),
+    fabResult: document.getElementById('fab-result'),
     resultSheet: $('result-sheet'),
     statsKm: $('stats-km'),
     statsDpos: $('stats-dpos'),
@@ -353,9 +355,16 @@ export function init(stateModule, mapApi, services, libs) {
       elements.resultSheet.classList.add('result-sheet--hidden');
       elements.resultSheet.dataset.state = 'hidden';
       elements.resultSheet.hidden = true;
+      syncFabResultVisibility(state);
+      updateFabStates();
       return;
     }
     const stats = state.route.stats || {};
+    // Aprendo il Percorso dopo un nuovo calcolo, riporta Tappe a peek su mobile
+    // (toggle esclusivo: una sheet alla volta).
+    if (window.matchMedia && window.matchMedia('(max-width: 767px)').matches) {
+      if (elements.sheetStops) elements.sheetStops.dataset.state = 'peek';
+    }
     elements.resultSheet.classList.remove('result-sheet--hidden');
     elements.resultSheet.hidden = false;
     // Mostra il pannello in stato "open" al primo calcolo, poi rispetta lo
@@ -404,6 +413,9 @@ export function init(stateModule, mapApi, services, libs) {
       if (!chartInstance) chartInstance = elevationChart.create(elements.chartCanvas, state.route.elevation);
       else elevationChart.update(chartInstance, state.route.elevation);
     }
+
+    syncFabResultVisibility(state);
+    updateFabStates();
   }
 
   function renderSearchResults(results) {
@@ -512,6 +524,84 @@ export function init(stateModule, mapApi, services, libs) {
     else next = 'peek';
     sheetEl.dataset.state = next;
     if (handleEl) handleEl.setAttribute('aria-expanded', next === 'peek' ? 'false' : 'true');
+  }
+
+  /* ===== FAB Toggle pannelli (mobile only) =====
+     I FAB rimangono SEMPRE visibili (z 970, sopra le sheet a z 950/960).
+     Toggle esclusivo: aprendo Tappe → Percorso si nasconde, e viceversa.
+     fab-result è visibile solo se c'è un percorso calcolato. */
+
+  function isResultVisible() {
+    if (!elements.sheetResult) return false;
+    return !elements.sheetResult.hidden
+      && !elements.sheetResult.classList.contains('result-sheet--hidden')
+      && elements.sheetResult.dataset.state !== 'hidden';
+  }
+
+  function hideResultSheet() {
+    if (!elements.sheetResult) return;
+    elements.sheetResult.classList.add('result-sheet--hidden');
+    elements.sheetResult.dataset.state = 'hidden';
+    elements.sheetResult.hidden = true;
+    updateFabStates();
+  }
+
+  function showResultSheet() {
+    if (!elements.sheetResult) return;
+    // Aprendo il Percorso, riporta Tappe a peek per evitare sovrapposizione
+    if (elements.sheetStops) elements.sheetStops.dataset.state = 'peek';
+    if (elements.sheetStopsHandle) {
+      elements.sheetStopsHandle.setAttribute('aria-expanded', 'false');
+    }
+    elements.sheetResult.classList.remove('result-sheet--hidden');
+    elements.sheetResult.hidden = false;
+    elements.sheetResult.dataset.state = 'open';
+    updateFabStates();
+  }
+
+  function openStopsSheet() {
+    if (!elements.sheetStops) return;
+    // Aprendo Tappe, nascondo Percorso
+    if (isResultVisible()) {
+      elements.sheetResult.classList.add('result-sheet--hidden');
+      elements.sheetResult.dataset.state = 'hidden';
+      elements.sheetResult.hidden = true;
+    }
+    elements.sheetStops.dataset.state = 'open';
+    if (elements.sheetStopsHandle) {
+      elements.sheetStopsHandle.setAttribute('aria-expanded', 'true');
+    }
+    updateFabStates();
+  }
+
+  function peekStopsSheet() {
+    if (!elements.sheetStops) return;
+    elements.sheetStops.dataset.state = 'peek';
+    if (elements.sheetStopsHandle) {
+      elements.sheetStopsHandle.setAttribute('aria-expanded', 'false');
+    }
+    updateFabStates();
+  }
+
+  function updateFabStates() {
+    const stopsOpen = elements.sheetStops
+      && elements.sheetStops.dataset.state !== 'peek'
+      && !elements.sheetStops.hidden;
+    const resVisible = isResultVisible();
+    if (elements.fabStops) {
+      elements.fabStops.classList.toggle('sheet-fab--active', !!stopsOpen);
+      elements.fabStops.setAttribute('aria-pressed', stopsOpen ? 'true' : 'false');
+    }
+    if (elements.fabResult) {
+      elements.fabResult.classList.toggle('sheet-fab--active', resVisible);
+      elements.fabResult.setAttribute('aria-pressed', resVisible ? 'true' : 'false');
+    }
+  }
+
+  // Mostra/nascondi fab-result in base alla presenza di un percorso calcolato.
+  function syncFabResultVisibility(state) {
+    if (!elements.fabResult) return;
+    elements.fabResult.hidden = !state || !state.route;
   }
 
   /* ===== Cronologia percorsi ===== */
@@ -915,19 +1005,32 @@ export function init(stateModule, mapApi, services, libs) {
     if (elements.sheetStopsHandle) {
       elements.sheetStopsHandle.addEventListener('click', () => {
         cycleSheetState(elements.sheetStops, elements.sheetStopsHandle);
+        updateFabStates();
       });
     }
     if (elements.sheetResultHandle) {
       elements.sheetResultHandle.addEventListener('click', () => {
         cycleSheetState(elements.sheetResult, elements.sheetResultHandle);
+        updateFabStates();
       });
     }
     if (elements.sheetResultClose) {
       elements.sheetResultClose.addEventListener('click', () => {
-        if (elements.sheetResult) {
-          elements.sheetResult.dataset.state = 'hidden';
-          elements.sheetResult.hidden = true;
-        }
+        hideResultSheet();
+      });
+    }
+    // FAB toggle (mobile only — il CSS li nasconde su desktop)
+    if (elements.fabStops) {
+      elements.fabStops.addEventListener('click', () => {
+        const cur = elements.sheetStops ? elements.sheetStops.dataset.state : 'peek';
+        if (cur === 'peek') openStopsSheet();
+        else peekStopsSheet();
+      });
+    }
+    if (elements.fabResult) {
+      elements.fabResult.addEventListener('click', () => {
+        if (isResultVisible()) hideResultSheet();
+        else showResultSheet();
       });
     }
 
