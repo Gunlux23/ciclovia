@@ -600,7 +600,9 @@ export function init(stateModule, mapApi, services, libs) {
       elements.fabStops.setAttribute('aria-pressed', stopsOpen ? 'true' : 'false');
     }
     if (elements.fabResult) {
-      const hasRoute = !!elements.fabResult.dataset.hasRoute;
+      // hasRoute proxy: o il dataset esplicito, o l'ovvietà che il
+      // result-sheet sia visibile (c'è una route in mostra).
+      const hasRoute = !!elements.fabResult.dataset.hasRoute || resVisible;
       elements.fabResult.hidden = !hasRoute || resVisible;
       elements.fabResult.classList.toggle('sheet-fab--active', resVisible);
       elements.fabResult.setAttribute('aria-pressed', resVisible ? 'true' : 'false');
