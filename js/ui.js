@@ -134,6 +134,20 @@ export function init(stateModule, mapApi, services, libs) {
       .replace(/'/g, '&#39;');
   }
 
+  // Estrae la versione dal nome della cache attiva del Service Worker
+  // (es. 'ciclovia-shell-v17' → 'v17'). Ritorna null se SW non disponibile.
+  async function getAppVersion() {
+    try {
+      if (typeof caches === 'undefined' || !caches.keys) return null;
+      const keys = await caches.keys();
+      const shell = keys.find((k) => k.startsWith('ciclovia-shell-'));
+      if (!shell) return null;
+      return shell.replace('ciclovia-shell-', '');
+    } catch {
+      return null;
+    }
+  }
+
   function makePlaceholder(role, hint) {
     const li = document.createElement('li');
     li.className = `tappa-placeholder tappa-placeholder--${role.key}`;
@@ -828,10 +842,12 @@ export function init(stateModule, mapApi, services, libs) {
       });
     }
     if (elements.menuAbout) {
-      elements.menuAbout.addEventListener('click', () => {
+      elements.menuAbout.addEventListener('click', async () => {
         closeMenu();
+        const version = await getAppVersion();
+        const versionLabel = version ? ` ${version}` : '';
         showToast(
-          'Ciclovia — Percorsi ciclabili evita-traffico. Dati: BRouter + OpenStreetMap.',
+          `Ciclovia${versionLabel} — Percorsi ciclabili evita-traffico. Dati: BRouter + OpenStreetMap.`,
           'info',
         );
       });
