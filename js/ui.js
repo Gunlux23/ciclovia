@@ -585,24 +585,25 @@ export function init(stateModule, mapApi, services, libs) {
 
   function updateFabStates() {
     // Un FAB serve come ENTRY POINT alla sheet quando è chiusa. Quando la
-    // sheet è aperta, l'utente ha già grabber/× → il FAB diventa rumore
-    // visivo che galleggia sopra il contenuto. Quindi nascondiamo il FAB
-    // della sheet attualmente aperta.
-    const stopsOpen = elements.sheetStops
+    // sheet è aperta, il FAB diventa rumore visivo che galleggia sul
+    // contenuto: nascondiamolo. La classe --active non è praticamente mai
+    // visibile (perchè quando lo stato è "attivo" il FAB è nascosto), ma
+    // la teniamo coerente per a11y e debug.
+    const stopsOpen = !!(elements.sheetStops
       && elements.sheetStops.dataset.state !== 'peek'
-      && !elements.sheetStops.hidden;
+      && !elements.sheetStops.hidden);
     const resVisible = isResultVisible();
+
     if (elements.fabStops) {
-      elements.fabStops.hidden = !!stopsOpen;
+      elements.fabStops.hidden = stopsOpen;
+      elements.fabStops.classList.toggle('sheet-fab--active', stopsOpen);
+      elements.fabStops.setAttribute('aria-pressed', stopsOpen ? 'true' : 'false');
     }
     if (elements.fabResult) {
-      // Visibile solo se: c'è un percorso (gestito da syncFabResultVisibility)
-      // E result-sheet è chiuso. Se è aperto, lo nascondiamo.
-      if (!elements.fabResult.dataset.hasRoute) {
-        elements.fabResult.hidden = true;
-      } else {
-        elements.fabResult.hidden = resVisible;
-      }
+      const hasRoute = !!elements.fabResult.dataset.hasRoute;
+      elements.fabResult.hidden = !hasRoute || resVisible;
+      elements.fabResult.classList.toggle('sheet-fab--active', resVisible);
+      elements.fabResult.setAttribute('aria-pressed', resVisible ? 'true' : 'false');
     }
   }
 
