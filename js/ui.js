@@ -1183,6 +1183,10 @@ export function init(stateModule, mapApi, services, libs) {
   }
 
   bindEvents();
+  // Sync iniziale FAB: prima del primo render, lo stato visivo dei FAB deve
+  // riflettere il DOM (result-sheet hidden = nessun route → fab-result nascosto;
+  // sheet-stops in peek → fab-stops visibile).
+  updateFabStates();
 
   return {
     renderAll(state) {
