@@ -360,10 +360,10 @@ export function init(stateModule, mapApi, services, libs) {
       return;
     }
     const stats = state.route.stats || {};
-    // Aprendo il Percorso dopo un nuovo calcolo, riporta Tappe a peek su mobile
-    // (toggle esclusivo: una sheet alla volta).
-    if (window.matchMedia && window.matchMedia('(max-width: 767px)').matches) {
-      if (elements.sheetStops) elements.sheetStops.dataset.state = 'peek';
+    // Aprendo il Percorso dopo un nuovo calcolo, su mobile nascondo Tappe
+    // (toggle esclusivo: una sheet alla volta, niente peek su mobile).
+    if (isMobileViewport()) {
+      if (elements.sheetStops) elements.sheetStops.dataset.state = 'hidden';
     }
     elements.resultSheet.classList.remove('result-sheet--hidden');
     elements.resultSheet.hidden = false;
@@ -486,10 +486,10 @@ export function init(stateModule, mapApi, services, libs) {
     }
   }
 
-  // Apre la ricerca con il bottom-sheet ridotto a peek (libera spazio mappa)
+  // Apre la ricerca con il bottom-sheet Tappe in stato chiuso (libera spazio mappa)
   function openWaypointSearch() {
     if (elements.sheetStops) {
-      elements.sheetStops.dataset.state = 'peek';
+      elements.sheetStops.dataset.state = isMobileViewport() ? 'hidden' : 'peek';
       if (elements.sheetStopsHandle) {
         elements.sheetStopsHandle.setAttribute('aria-expanded', 'false');
       }
@@ -517,13 +517,27 @@ export function init(stateModule, mapApi, services, libs) {
 
   function cycleSheetState(sheetEl, handleEl) {
     if (!sheetEl) return;
-    const current = sheetEl.dataset.state || 'peek';
+    // Su mobile niente peek per entrambe le sheet: collassata = hidden.
+    // Su desktop manteniamo il comportamento storico (peek visibile).
+    const collapsedState = isMobileViewport() ? 'hidden' : 'peek';
+    const current = sheetEl.dataset.state || collapsedState;
     let next;
-    if (current === 'peek') next = 'open';
-    else if (current === 'full') next = 'open';
-    else next = 'peek';
+    if (current === 'full') next = 'open';
+    else if (current === 'open') next = collapsedState;
+    else next = 'open';
     sheetEl.dataset.state = next;
-    if (handleEl) handleEl.setAttribute('aria-expanded', next === 'peek' ? 'false' : 'true');
+    if (sheetEl === elements.sheetResult) {
+      // Per result-sheet allineiamo anche hidden attr + classe legacy
+      if (next === 'hidden') {
+        sheetEl.classList.add('result-sheet--hidden');
+        sheetEl.hidden = true;
+      } else {
+        sheetEl.classList.remove('result-sheet--hidden');
+        sheetEl.hidden = false;
+      }
+    }
+    if (handleEl) handleEl.setAttribute('aria-expanded', next === 'open' || next === 'full' ? 'true' : 'false');
+    updateFabStates();
   }
 
   /* ===== FAB Toggle pannelli (mobile only) =====
@@ -548,8 +562,10 @@ export function init(stateModule, mapApi, services, libs) {
 
   function showResultSheet() {
     if (!elements.sheetResult) return;
-    // Aprendo il Percorso, riporta Tappe a peek per evitare sovrapposizione
-    if (elements.sheetStops) elements.sheetStops.dataset.state = 'peek';
+    // Aprendo il Percorso, Tappe va in stato chiuso (hidden su mobile, peek su desktop)
+    if (elements.sheetStops) {
+      elements.sheetStops.dataset.state = isMobileViewport() ? 'hidden' : 'peek';
+    }
     if (elements.sheetStopsHandle) {
       elements.sheetStopsHandle.setAttribute('aria-expanded', 'false');
     }
@@ -574,14 +590,24 @@ export function init(stateModule, mapApi, services, libs) {
     updateFabStates();
   }
 
-  function peekStopsSheet() {
+  function isMobileViewport() {
+    return window.matchMedia('(max-width: 767px)').matches;
+  }
+
+  // Stato "chiuso" della sheet Tappe:
+  // - mobile → completamente nascosta (hidden), si riapre solo dal FAB
+  // - desktop → peek (linguetta visibile, comportamento storico)
+  function collapseStopsSheet() {
     if (!elements.sheetStops) return;
-    elements.sheetStops.dataset.state = 'peek';
+    elements.sheetStops.dataset.state = isMobileViewport() ? 'hidden' : 'peek';
     if (elements.sheetStopsHandle) {
       elements.sheetStopsHandle.setAttribute('aria-expanded', 'false');
     }
     updateFabStates();
   }
+
+  // Alias storico mantenuto per compatibilità coi call-site esistenti
+  function peekStopsSheet() { collapseStopsSheet(); }
 
   function updateFabStates() {
     // Un FAB serve come ENTRY POINT alla sheet quando è chiusa. Quando la
@@ -589,8 +615,9 @@ export function init(stateModule, mapApi, services, libs) {
     // contenuto: nascondiamolo. La classe --active non è praticamente mai
     // visibile (perchè quando lo stato è "attivo" il FAB è nascosto), ma
     // la teniamo coerente per a11y e debug.
+    const stopsState = elements.sheetStops ? elements.sheetStops.dataset.state : 'hidden';
     const stopsOpen = !!(elements.sheetStops
-      && elements.sheetStops.dataset.state !== 'peek'
+      && (stopsState === 'open' || stopsState === 'full')
       && !elements.sheetStops.hidden);
     const resVisible = isResultVisible();
 
@@ -1016,8 +1043,15 @@ export function init(stateModule, mapApi, services, libs) {
     });
 
     // --- Sheet handles ---
-    if (elements.sheetStops && !elements.sheetStops.dataset.state) {
-      elements.sheetStops.dataset.state = 'peek';
+    if (elements.sheetStops) {
+      // Su mobile la sheet Tappe parte sempre nascosta (no peek): l'utente
+      // la apre dal FAB. Su desktop manteniamo il peek storico.
+      const initial = isMobileViewport() ? 'hidden' : 'peek';
+      // Forziamo lo stato anche se l'HTML preimpostava un valore (es. "peek").
+      elements.sheetStops.dataset.state = initial;
+      if (elements.sheetStopsHandle) {
+        elements.sheetStopsHandle.setAttribute('aria-expanded', 'false');
+      }
     }
     if (elements.sheetStopsHandle) {
       elements.sheetStopsHandle.addEventListener('click', () => {
@@ -1039,9 +1073,10 @@ export function init(stateModule, mapApi, services, libs) {
     // FAB toggle (mobile only — il CSS li nasconde su desktop)
     if (elements.fabStops) {
       elements.fabStops.addEventListener('click', () => {
-        const cur = elements.sheetStops ? elements.sheetStops.dataset.state : 'peek';
-        if (cur === 'peek') openStopsSheet();
-        else peekStopsSheet();
+        const cur = elements.sheetStops ? elements.sheetStops.dataset.state : 'hidden';
+        const isOpen = (cur === 'open' || cur === 'full');
+        if (isOpen) collapseStopsSheet();
+        else openStopsSheet();
       });
     }
     if (elements.fabResult) {

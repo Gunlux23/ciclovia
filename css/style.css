@@ -437,6 +437,7 @@ body[data-result-open="true"] .fab--gps {
 }
 
 /* Stati sheet — JS imposta data-state */
+.sheet--stops[data-state="hidden"]   { transform: translateY(100%); }
 .sheet--stops[data-state="peek"]     { height: var(--sheet-peek); }
 .sheet--stops[data-state="open"]     { height: 50vh; }
 .sheet--stops[data-state="full"]     { height: 85vh; }
