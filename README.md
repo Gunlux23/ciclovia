@@ -4,6 +4,14 @@ PWA per calcolare **percorsi ciclistici** che evitano il traffico automobilistic
 
 Zero backend, zero npm, zero build step.
 
+<!-- BADGE VERSIONE: aggiornare il numero qui sotto ad ogni release, in sincronia
+     con APP_VERSION in js/ui.js e il tag git. L'URL invece resta sempre lo stesso. -->
+## ▶ Apri l'app
+
+**[Apri Ciclovia — v1.0](https://gunlux23.github.io/ciclovia/)** — funziona su **desktop** e mobile, installabile come PWA.
+
+> Link diretto (sempre lo stesso ad ogni versione): <https://gunlux23.github.io/ciclovia/>
+
 ## Come usarla
 
 Apri `index.html` da un **server locale** (il service worker e la geolocalizzazione richiedono `http://localhost` o HTTPS, non `file://`):
