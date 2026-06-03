@@ -52,6 +52,8 @@ export function init(stateModule, mapApi, services, libs) {
     btnAdd: $('btn-add-waypoint'),
     btnAddCurrent: document.getElementById('add-current'),
     btnGps: $('btn-use-gps'),
+    btnLocate: document.getElementById('btn-locate'),
+    btnCalc: document.getElementById('btn-calc'),
     menuBtn: document.getElementById('menu-btn'),
     menuPopover: document.getElementById('menu-popover'),
     menuAbout: document.getElementById('menu-about'),
@@ -111,6 +113,14 @@ export function init(stateModule, mapApi, services, libs) {
   let searchDebounceTimer = null;
   let pendingReplaceId = null;
   let anotherLoopHandler = null;
+  let calculateHandler = null;
+  // Indicatore posizione "live": cleanup del watch GPS attivo (null = spento)
+  let locateCleanup = null;
+  let locateCentered = false;
+  // routeKey dell'ultimo percorso "mostrato": serve a distinguere un percorso
+  // appena calcolato (→ su mobile apro Percorso e chiudo Tappe) da un semplice
+  // re-render mentre l'utente sta ancora editando le tappe (→ non tocco le sheet).
+  let lastRenderedRouteKey = null;
 
   function showToast(message, type = 'info') {
     if (!elements.toastContainer) {
@@ -298,6 +308,44 @@ export function init(stateModule, mapApi, services, libs) {
     });
   }
 
+  // Pulsante "Calcola percorso": riflette lo stato del calcolo on-demand.
+  // - disabilitato se non ci sono tappe sufficienti o il percorso è già in pari
+  // - evidenziato ("ready") quando c'è qualcosa da (ri)calcolare
+  function renderCalcButton(state) {
+    const btn = elements.btnCalc;
+    if (!btn) return;
+    const targetActive = state.targetDistanceEnabled === true &&
+      Number.isFinite(state.targetDistanceKm) && state.targetDistanceKm > 0;
+    const minWp = targetActive ? 1 : 2;
+    const canCalc = state.waypoints.length >= minWp;
+    const hasRoute = !!state.route;
+    const dirty = state.recalcDirty === true;
+    const loading = state.status === 'loading';
+
+    let label;
+    let disabled;
+    if (loading) {
+      label = 'Calcolo…';
+      disabled = true;
+    } else if (!canCalc) {
+      label = minWp === 1 ? 'Aggiungi una partenza' : 'Aggiungi partenza e arrivo';
+      disabled = true;
+    } else if (!hasRoute) {
+      label = 'Calcola percorso';
+      disabled = false;
+    } else if (dirty) {
+      label = 'Ricalcola percorso';
+      disabled = false;
+    } else {
+      label = 'Percorso aggiornato';
+      disabled = true;
+    }
+    btn.textContent = label;
+    btn.disabled = disabled;
+    btn.classList.toggle('btn-calc--ready', !disabled);
+    btn.setAttribute('aria-busy', loading ? 'true' : 'false');
+  }
+
   // Soglia oltre la quale il calcolo iterativo può essere lento
   // (>5 chiamate a BRouter su distanze elevate → tempi 10-30s).
   const SLOW_KM_THRESHOLD = 300;
@@ -355,22 +403,30 @@ export function init(stateModule, mapApi, services, libs) {
       elements.resultSheet.classList.add('result-sheet--hidden');
       elements.resultSheet.dataset.state = 'hidden';
       elements.resultSheet.hidden = true;
+      lastRenderedRouteKey = null;
       syncFabResultVisibility(state);
       updateFabStates();
       return;
     }
     const stats = state.route.stats || {};
-    // Aprendo il Percorso dopo un nuovo calcolo, su mobile nascondo Tappe
-    // (toggle esclusivo: una sheet alla volta, niente peek su mobile).
-    if (isMobileViewport()) {
-      if (elements.sheetStops) elements.sheetStops.dataset.state = 'hidden';
-    }
-    elements.resultSheet.classList.remove('result-sheet--hidden');
-    elements.resultSheet.hidden = false;
-    // Mostra il pannello in stato "open" al primo calcolo, poi rispetta lo
-    // stato scelto dall'utente (peek/open/full).
-    if (elements.resultSheet.dataset.state === 'hidden' || !elements.resultSheet.dataset.state) {
-      elements.resultSheet.dataset.state = 'open';
+    // Un percorso "appena calcolato" ha un routeKey diverso dall'ultimo mostrato.
+    // Solo in quel caso applichiamo l'apertura automatica del Percorso; durante
+    // l'editing delle tappe (riordino/aggiunta senza ricalcolo) NON tocchiamo le
+    // sheet, così il pannello Tappe non si chiude da solo sotto le mani.
+    const isNewRoute = state.route.routeKey !== lastRenderedRouteKey;
+    lastRenderedRouteKey = state.route.routeKey;
+    if (isNewRoute) {
+      // Su mobile: aprendo il Percorso nascondo Tappe (una sheet alla volta).
+      if (isMobileViewport()) {
+        if (elements.sheetStops) elements.sheetStops.dataset.state = 'hidden';
+      }
+      elements.resultSheet.classList.remove('result-sheet--hidden');
+      elements.resultSheet.hidden = false;
+      // Mostra il pannello in stato "open" al primo calcolo, poi rispetta lo
+      // stato scelto dall'utente (peek/open/full).
+      if (elements.resultSheet.dataset.state === 'hidden' || !elements.resultSheet.dataset.state) {
+        elements.resultSheet.dataset.state = 'open';
+      }
     }
     if (elements.statsKm) elements.statsKm.textContent = formatKm(stats.km);
     if (elements.statsDpos) elements.statsDpos.textContent = `+${formatMeters(stats.dPos)}`;
@@ -1154,6 +1210,48 @@ export function init(stateModule, mapApi, services, libs) {
       });
     }
 
+    // --- Indicatore di posizione "live" (toggle, puntino blu che ti segue) ---
+    if (elements.btnLocate) {
+      const stopLocate = () => {
+        if (locateCleanup) { locateCleanup(); locateCleanup = null; }
+        locateCentered = false;
+        mapApi.clearUserLocation();
+        elements.btnLocate.classList.remove('fab--active');
+        elements.btnLocate.setAttribute('aria-pressed', 'false');
+      };
+      elements.btnLocate.addEventListener('click', () => {
+        if (locateCleanup) { stopLocate(); return; }
+        try {
+          locateCentered = false;
+          locateCleanup = geolocation.watch((err, pos) => {
+            if (err) {
+              showToast(err.message || 'Errore di geolocalizzazione.', 'error');
+              stopLocate();
+              return;
+            }
+            mapApi.setUserLocation(pos);
+            // Centro solo al primo fix, poi lascio l'utente libero di pannare.
+            if (!locateCentered) {
+              mapApi.flyTo({ lat: pos.lat, lon: pos.lon });
+              locateCentered = true;
+            }
+          });
+          elements.btnLocate.classList.add('fab--active');
+          elements.btnLocate.setAttribute('aria-pressed', 'true');
+        } catch (err) {
+          showToast(err.message || 'Geolocalizzazione non supportata.', 'error');
+          locateCleanup = null;
+        }
+      });
+    }
+
+    // --- Pulsante "Calcola percorso" (calcolo on-demand) ---
+    if (elements.btnCalc) {
+      elements.btnCalc.addEventListener('click', () => {
+        if (calculateHandler) calculateHandler();
+      });
+    }
+
     if (elements.btnGpx) {
       elements.btnGpx.addEventListener('click', () => {
         const state = stateModule.getState();
@@ -1234,11 +1332,15 @@ export function init(stateModule, mapApi, services, libs) {
       updateProfileHint(state.profile);
       renderTappeList(state);
       renderTargetDistance(state);
+      renderCalcButton(state);
       renderStats(state);
     },
     showToast,
     onAnotherLoop(callback) {
       anotherLoopHandler = callback;
+    },
+    onCalculate(callback) {
+      calculateHandler = callback;
     },
     onHistoryFull,
   };

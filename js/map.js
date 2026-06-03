@@ -16,6 +16,17 @@ const SEGMENT_COLORS = {
 const LONG_PRESS_MS = 500;
 const LONG_PRESS_MOVE_TOLERANCE = 8; // px
 
+// Sanitizza testo proveniente da fonti esterne (es. tag OSM, editabili da
+// chiunque) prima di interpolarlo in HTML, per prevenire XSS nei popup.
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function buildIcon(role, label) {
   const color = ROLE_COLORS[role] || ROLE_COLORS.via;
   const html = `
@@ -48,6 +59,8 @@ export function init(containerId, { center = [44.39, 7.55], zoom = 12 } = {}) {
 
   let routeLayer = null;
   let fountainsLayer = null;
+  let userDot = null;       // puntino blu posizione utente
+  let userAccuracy = null;  // alone di precisione attorno al puntino
   const markers = new Map();
   let markerDragHandler = null;
   let longPressHandler = null;
@@ -269,7 +282,10 @@ export function init(containerId, { center = [44.39, 7.55], zoom = 12 } = {}) {
           iconAnchor: [11, 11],
           popupAnchor: [0, -12],
         });
-        const label = f.name || f.kind || 'Fontanella';
+        // f.name arriva dai tag OpenStreetMap (editabili da chiunque): va
+        // sanitizzato prima di finire nell'HTML del popup, altrimenti un nome
+        // malevolo eseguirebbe codice nel browser dell'utente (XSS).
+        const label = escapeHtml(f.name || f.kind || 'Fontanella');
         const sub = f.potable === false ? ' (verificare potabilità)' : '';
         L.marker([f.lat, f.lon], { icon, keyboard: false })
           .bindPopup(`💧 <b>${label}</b>${sub}`)
@@ -341,6 +357,40 @@ export function init(containerId, { center = [44.39, 7.55], zoom = 12 } = {}) {
 
     onMarkerDelete(callback) {
       markerDeleteHandler = callback;
+    },
+
+    // Indicatore posizione utente "live": puntino blu + alone di precisione.
+    // È uno strato dedicato, NON un waypoint: non entra nel routing.
+    setUserLocation({ lat, lon, accuracy }) {
+      const latlng = [lat, lon];
+      const radius = Number.isFinite(accuracy) ? accuracy : 0;
+      if (!userDot) {
+        userAccuracy = L.circle(latlng, {
+          radius,
+          interactive: false,
+          color: '#1a73e8',
+          weight: 1,
+          opacity: 0.4,
+          fillColor: '#1a73e8',
+          fillOpacity: 0.12,
+        }).addTo(map);
+        userDot = L.circleMarker(latlng, {
+          radius: 7,
+          interactive: false,
+          color: '#ffffff',
+          weight: 3,
+          fillColor: '#1a73e8',
+          fillOpacity: 1,
+        }).addTo(map);
+      } else {
+        userAccuracy.setLatLng(latlng).setRadius(radius);
+        userDot.setLatLng(latlng);
+      }
+    },
+
+    clearUserLocation() {
+      if (userDot) { map.removeLayer(userDot); userDot = null; }
+      if (userAccuracy) { map.removeLayer(userAccuracy); userAccuracy = null; }
     },
   };
 }

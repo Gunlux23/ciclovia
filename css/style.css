@@ -126,6 +126,26 @@ input, select, button { font-family: inherit; }
   border-color: var(--c-green-300);
   box-shadow: none;
 }
+
+/* Pulsante "Calcola percorso" (calcolo on-demand) */
+.btn-calc {
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px 14px;
+  font-size: 1rem;
+}
+/* Evidenziato quando c'è qualcosa da (ri)calcolare */
+.btn-calc--ready {
+  animation: calcPulse 1.8s ease-in-out infinite;
+}
+@keyframes calcPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(45, 80, 22, .45); }
+  70%  { box-shadow: 0 0 0 8px rgba(45, 80, 22, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(45, 80, 22, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-calc--ready { animation: none; box-shadow: 0 0 0 3px rgba(45, 80, 22, .25); }
+}
 .btn--ghost:hover { background: rgba(45,80,22,.08); }
 
 .icon-btn {
@@ -349,6 +369,18 @@ body[data-result-open="true"] .fab--gps {
   /* sale quando il sheet risultato è aperto */
   bottom: calc(var(--sheet-peek) + 60vh - 40vh + var(--safe-bottom));
 }
+/* FAB indicatore posizione "live": impilato sopra al FAB GPS */
+.fab--locate {
+  right: max(12px, var(--safe-right));
+  bottom: calc(var(--sheet-peek) + 12px + 56px + var(--safe-bottom));
+  transition: bottom .2s ease;
+}
+/* Stato attivo del toggle posizione (puntino live acceso) */
+.fab--active {
+  background: #1a73e8;
+  color: #fff;
+}
+.fab--active:hover { background: #1669d8; }
 
 /* ---------- Bottom sheets ---------- */
 .sheet {
@@ -946,6 +978,10 @@ body[data-result-open="true"] .fab--gps {
   .sheet--result[data-state="full"]  { height: calc(100vh - var(--topbar-h) - 40px); }
   .fab--gps {
     bottom: calc(20px + 96px + 12px);
+    right: 20px;
+  }
+  .fab--locate {
+    bottom: calc(20px + 96px + 12px + 56px);
     right: 20px;
   }
   .leaflet-bottom { bottom: 20px !important; }

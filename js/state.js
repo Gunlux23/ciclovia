@@ -15,6 +15,9 @@ const initialState = {
   targetDistanceEnabled: false,
   targetDistanceKm: 30,
   loopSeed: 0,
+  // Calcolo on-demand: true = uno o più input del percorso sono cambiati e il
+  // percorso va (ri)calcolato premendo "Calcola". Non viene persistito.
+  recalcDirty: false,
 };
 
 let state = { ...initialState };
@@ -117,6 +120,18 @@ export function update(patch) {
     'targetDistanceKm' in patch
   ) {
     persist();
+  }
+  // Calcolo on-demand: ogni modifica a un input del percorso marca lo stato
+  // come "da ricalcolare", a meno che il chiamante non gestisca recalcDirty
+  // esplicitamente (es. app.js lo azzera dopo un calcolo riuscito).
+  if (!('recalcDirty' in patch)) {
+    const inputChanged =
+      'waypoints' in patch ||
+      'profile' in patch ||
+      'targetDistanceEnabled' in patch ||
+      'targetDistanceKm' in patch ||
+      'loopSeed' in patch;
+    if (inputChanged) state.recalcDirty = true;
   }
   for (const fn of subscribers) {
     fn(deepCopy(state), previous);

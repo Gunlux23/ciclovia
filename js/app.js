@@ -12,8 +12,6 @@ import * as share from './lib/share.js';
 import * as stats from './lib/stats.js';
 import * as elevationChart from './lib/elevation-chart.js';
 
-const RECALC_DEBOUNCE_MS = 400;
-
 function waypointsKey(waypoints, profile, opts = {}) {
   const tdPart = opts.targetEnabled
     ? `|td:${opts.targetKm}|seed:${(opts.loopSeed || 0).toFixed(3)}`
@@ -37,7 +35,6 @@ document.addEventListener('DOMContentLoaded', () => {
     { gpx, share, elevationChart: elevationChart, stats },
   );
 
-  let recalcTimer = null;
   let inFlightKey = null;
   let lastRouteKey = null;
   let inFlightAbort = null;
@@ -197,7 +194,7 @@ document.addEventListener('DOMContentLoaded', () => {
       fountains: [],
     };
     lastRouteKey = key;
-    state.update({ route, status: 'idle', error: null });
+    state.update({ route, status: 'idle', error: null, recalcDirty: false });
     mapApi.clearFountains();
     mapApi.drawRoute(route.geojson, segments);
     mapApi.fitToRoute(route.geojson);
@@ -238,11 +235,6 @@ document.addEventListener('DOMContentLoaded', () => {
       });
   }
 
-  function scheduleRecalc() {
-    clearTimeout(recalcTimer);
-    recalcTimer = setTimeout(recalculateRoute, RECALC_DEBOUNCE_MS);
-  }
-
   state.subscribe((current, previous) => {
     uiApi.renderAll(current);
 
@@ -256,26 +248,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (waypointsChanged) syncMarkers(current, previous);
 
-    const profileChanged = previous && previous.profile !== current.profile;
-    const targetChanged = previous && (
-      previous.targetDistanceEnabled !== current.targetDistanceEnabled ||
-      previous.targetDistanceKm !== current.targetDistanceKm ||
-      previous.loopSeed !== current.loopSeed
-    );
-
-    if (waypointsChanged || profileChanged || targetChanged) {
-      const targetActive = current.targetDistanceEnabled === true &&
-        Number.isFinite(current.targetDistanceKm) &&
-        current.targetDistanceKm > 0;
-      const minWp = targetActive ? 1 : 2;
-      if (current.waypoints.length >= minWp) {
-        scheduleRecalc();
-      } else {
-        lastRouteKey = null;
-        mapApi.clearRoute();
-        mapApi.clearFountains();
-        if (current.route) state.update({ route: null });
-      }
+    // Calcolo on-demand: NON ricalcoliamo più automaticamente sugli input.
+    // Le modifiche marcano lo stato come "da ricalcolare" (state.recalcDirty)
+    // e il percorso si (ri)calcola solo premendo "Calcola".
+    // Unica eccezione automatica: se scendiamo sotto il minimo di tappe per
+    // formare un percorso, il percorso esistente non ha più senso → lo togliamo.
+    const targetActive = current.targetDistanceEnabled === true &&
+      Number.isFinite(current.targetDistanceKm) &&
+      current.targetDistanceKm > 0;
+    const minWp = targetActive ? 1 : 2;
+    if (current.waypoints.length < minWp && current.route) {
+      lastRouteKey = null;
+      mapApi.clearRoute();
+      mapApi.clearFountains();
+      state.update({ route: null, recalcDirty: false });
     }
   });
 
@@ -302,15 +288,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const snap = state.getState();
     const delta = 0.5 + Math.random();
     state.update({ loopSeed: (snap.loopSeed || 0) + delta });
+    // "Altro giro" è un'azione esplicita: ricalcola subito.
+    recalculateRoute();
+  });
+
+  // Pulsante "Calcola percorso": unico innesco del calcolo on-demand.
+  uiApi.onCalculate(() => {
+    recalculateRoute();
   });
 
   // Initial render so existing state (from URL or localStorage) is reflected immediately.
   const bootState = state.getState();
   uiApi.renderAll(bootState);
   for (const wp of bootState.waypoints) mapApi.addMarker(wp);
-  const bootTargetActive = bootState.targetDistanceEnabled === true &&
-    Number.isFinite(bootState.targetDistanceKm) &&
-    bootState.targetDistanceKm > 0;
-  const bootMinWp = bootTargetActive ? 1 : 2;
-  if (bootState.waypoints.length >= bootMinWp) scheduleRecalc();
+  // Calcolo on-demand: niente ricalcolo automatico al boot. Se ci sono tappe
+  // sufficienti, il pulsante "Calcola" risulterà attivo e sarà l'utente a
+  // lanciare il calcolo.
 });
