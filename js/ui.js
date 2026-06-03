@@ -2,6 +2,10 @@ import * as routeHistory from './services/routeHistory.js';
 
 const TOAST_DURATIONS = { info: 3000, success: 3000, error: 5000 };
 
+// Versione prodotto mostrata in "Informazioni" (separata dal numero di cache
+// del Service Worker, che resta un contatore tecnico di cache-busting).
+const APP_VERSION = 'v1.0.0';
+
 function $(id) {
   const el = document.getElementById(id);
   if (!el) console.warn(`[ui] Elemento mancante: #${id}`);
@@ -1034,10 +1038,10 @@ export function init(stateModule, mapApi, services, libs) {
     if (elements.menuAbout) {
       elements.menuAbout.addEventListener('click', async () => {
         closeMenu();
-        const version = await getAppVersion();
-        const versionLabel = version ? ` ${version}` : '';
+        const cacheVer = await getAppVersion();
+        const buildLabel = cacheVer ? ` (build ${cacheVer})` : '';
         showToast(
-          `Ciclovia${versionLabel} — Percorsi ciclabili evita-traffico. Dati: BRouter + OpenStreetMap.`,
+          `Ciclovia ${APP_VERSION}${buildLabel} — Percorsi ciclabili evita-traffico. Dati: BRouter + OpenStreetMap.`,
           'info',
         );
       });
