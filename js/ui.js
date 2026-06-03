@@ -4,7 +4,7 @@ const TOAST_DURATIONS = { info: 3000, success: 3000, error: 5000 };
 
 // Versione prodotto mostrata in "Informazioni" (separata dal numero di cache
 // del Service Worker, che resta un contatore tecnico di cache-busting).
-const APP_VERSION = 'v1.0.0';
+const APP_VERSION = 'v1.0';
 
 function $(id) {
   const el = document.getElementById(id);
@@ -148,20 +148,6 @@ export function init(stateModule, mapApi, services, libs) {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
-  }
-
-  // Estrae la versione dal nome della cache attiva del Service Worker
-  // (es. 'ciclovia-shell-v17' → 'v17'). Ritorna null se SW non disponibile.
-  async function getAppVersion() {
-    try {
-      if (typeof caches === 'undefined' || !caches.keys) return null;
-      const keys = await caches.keys();
-      const shell = keys.find((k) => k.startsWith('ciclovia-shell-'));
-      if (!shell) return null;
-      return shell.replace('ciclovia-shell-', '');
-    } catch {
-      return null;
-    }
   }
 
   function makePlaceholder(role, hint) {
@@ -1036,12 +1022,10 @@ export function init(stateModule, mapApi, services, libs) {
       });
     }
     if (elements.menuAbout) {
-      elements.menuAbout.addEventListener('click', async () => {
+      elements.menuAbout.addEventListener('click', () => {
         closeMenu();
-        const cacheVer = await getAppVersion();
-        const buildLabel = cacheVer ? ` (build ${cacheVer})` : '';
         showToast(
-          `Ciclovia ${APP_VERSION}${buildLabel} — Percorsi ciclabili evita-traffico. Dati: BRouter + OpenStreetMap.`,
+          `Ciclovia ${APP_VERSION} — Percorsi ciclabili per evitare il traffico.`,
           'info',
         );
       });
