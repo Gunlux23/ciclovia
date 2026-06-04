@@ -65,7 +65,6 @@ export function init(stateModule, mapApi, services, libs) {
     sheetStopsHandle: document.getElementById('sheet-stops-handle'),
     sheetResult: document.getElementById('result-sheet'),
     sheetResultHandle: document.getElementById('sheet-result-handle'),
-    sheetResultClose: document.getElementById('sheet-result-close'),
     fabStops: document.getElementById('fab-stops'),
     fabResult: document.getElementById('fab-result'),
     resultSheet: $('result-sheet'),
@@ -1117,11 +1116,6 @@ export function init(stateModule, mapApi, services, libs) {
       elements.sheetResultHandle.addEventListener('click', () => {
         cycleSheetState(elements.sheetResult, elements.sheetResultHandle);
         updateFabStates();
-      });
-    }
-    if (elements.sheetResultClose) {
-      elements.sheetResultClose.addEventListener('click', () => {
-        hideResultSheet();
       });
     }
     // FAB toggle (mobile only — il CSS li nasconde su desktop)
