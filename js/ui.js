@@ -55,7 +55,6 @@ export function init(stateModule, mapApi, services, libs) {
     tappeList: $('tappe-list'),
     btnAdd: $('btn-add-waypoint'),
     btnAddCurrent: document.getElementById('add-current'),
-    btnGps: $('btn-use-gps'),
     btnLocate: document.getElementById('btn-locate'),
     btnCalc: document.getElementById('btn-calc'),
     menuBtn: document.getElementById('menu-btn'),
@@ -680,6 +679,17 @@ export function init(stateModule, mapApi, services, libs) {
       elements.fabResult.classList.toggle('sheet-fab--active', resVisible);
       elements.fabResult.setAttribute('aria-pressed', resVisible ? 'true' : 'false');
     }
+
+    // Pulsante posizione "live": sta in basso a destra, stesso angolo delle
+    // sheet. Lo nascondiamo quando una sheet lo coprirebbe, così non resta
+    // "sepolto" sotto il pannello: Tappe aperta copre l'angolo su mobile e
+    // desktop; il Percorso aperto lo copre solo su mobile (su desktop è a sx).
+    if (elements.btnLocate) {
+      const resultState = elements.sheetResult ? elements.sheetResult.dataset.state : 'hidden';
+      const resultOpen = resVisible && (resultState === 'open' || resultState === 'full');
+      const covered = stopsOpen || (isMobileViewport() && resultOpen);
+      elements.btnLocate.hidden = covered;
+    }
   }
 
   // Marca/disabilita la disponibilità del FAB Percorso in base alla presenza
@@ -1175,26 +1185,6 @@ export function init(stateModule, mapApi, services, libs) {
       elements.btnAdd.addEventListener('click', (e) => {
         e.stopPropagation();
         openWaypointSearch();
-      });
-    }
-
-    if (elements.btnGps) {
-      elements.btnGps.addEventListener('click', async () => {
-        try {
-          const pos = await geolocation.getCurrent();
-          stateModule.addWaypoint({
-            lat: pos.lat,
-            lon: pos.lon,
-            label: 'Posizione attuale',
-            source: 'gps',
-          });
-          mapApi.flyTo({ lat: pos.lat, lon: pos.lon });
-          if (pos.accuracy > 500) {
-            showToast(`Posizione imprecisa (±${Math.round(pos.accuracy)} m).`, 'info');
-          }
-        } catch (err) {
-          showToast(err.message || 'Errore di geolocalizzazione.', 'error');
-        }
       });
     }
 

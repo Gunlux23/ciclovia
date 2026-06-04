@@ -360,19 +360,12 @@ input, select, button { font-family: inherit; }
   cursor: pointer;
 }
 .fab:hover { background: var(--c-beige); }
-.fab--gps {
-  right: max(12px, var(--safe-right));
-  bottom: calc(var(--sheet-peek) + 12px + var(--safe-bottom));
-  transition: bottom .2s ease;
-}
-body[data-result-open="true"] .fab--gps {
-  /* sale quando il sheet risultato è aperto */
-  bottom: calc(var(--sheet-peek) + 60vh - 40vh + var(--safe-bottom));
-}
-/* FAB indicatore posizione "live": impilato sopra al FAB GPS */
+.fab[hidden] { display: none; }
+/* FAB indicatore posizione "live" (unico FAB sulla mappa, bottom-right).
+   Nascosto via JS quando una sheet lo coprirebbe. */
 .fab--locate {
   right: max(12px, var(--safe-right));
-  bottom: calc(var(--sheet-peek) + 12px + 56px + var(--safe-bottom));
+  bottom: calc(var(--sheet-peek) + 12px + var(--safe-bottom));
   transition: bottom .2s ease;
 }
 /* Stato attivo del toggle posizione (puntino live acceso) */
@@ -976,12 +969,8 @@ body[data-result-open="true"] .fab--gps {
   .sheet--result[data-state="peek"]  { height: 220px; }
   .sheet--result[data-state="open"]  { height: 480px; }
   .sheet--result[data-state="full"]  { height: calc(100vh - var(--topbar-h) - 40px); }
-  .fab--gps {
-    bottom: calc(20px + 96px + 12px);
-    right: 20px;
-  }
   .fab--locate {
-    bottom: calc(20px + 96px + 12px + 56px);
+    bottom: calc(20px + 96px + 12px);
     right: 20px;
   }
   .leaflet-bottom { bottom: 20px !important; }
